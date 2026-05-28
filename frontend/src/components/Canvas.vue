@@ -1,21 +1,5 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
-import {
-  Graph,
-  InternalEvent,
-  ImageExport,
-  PanningHandler,
-  RubberBandHandler,
-  xmlUtils,
-  Codec,
-  GraphDataModel,
-  registerModelCodecs,
-} from '@maxgraph/core'
-
-// 初始化 maxGraph 解码器，确保支持 XML 解析
-registerModelCodecs()
-
-import '@maxgraph/core/css/common.css'
 
 const props = defineProps({
   xml: {
@@ -26,173 +10,218 @@ const props = defineProps({
 
 const emit = defineEmits(['change'])
 
-const canvasRef = ref(null)
-const graphRef = ref(null)
-let graph = null
-let isEmittingChange = false
+const iframeRef = ref(null)
+const isReady = ref(false)
+const currentXml = ref(props.xml)
 
-// 监听 xml 属性变化，自动加载图形
-watch(() => props.xml, (newXml) => {
-  if (newXml && graph) {
-    // 只有当新 XML 与当前图形不同时才加载，避免循环更新
-    const currentXml = getXml()
-    if (newXml !== currentXml) {
-      loadXml(newXml)
+// draw.io embed URL parameters
+// embed=1: enable embed mode
+// ui=min: minimal UI
+// proto=json: use JSON protocol for postMessage
+// spin=1: show loading spinner
+// configure=1: allow sending configuration before loading
+const DRAWIO_URL = 'https://embed.diagrams.net/?embed=1&ui=min&proto=json&spin=1&configure=1'
+
+// Listen for messages from draw.io iframe
+const handleMessage = (event) => {
+  if (!event.data || typeof event.data !== 'string') return
+  
+  try {
+    const msg = JSON.parse(event.data)
+    
+    switch (msg.event) {
+      case 'configure':
+        // draw.io is asking for configuration
+        sendConfig()
+        break
+      case 'init':
+        // draw.io is ready after configuration
+        isReady.value = true
+        loadXml(props.xml || '')
+        break
+      case 'autosave':
+      case 'change':
+      case 'save':
+        // XML updated in draw.io
+        if (msg.xml) {
+          currentXml.value = msg.xml
+          emit('change', msg.xml)
+        }
+        // If it's a 'save' event, draw.io might expect an acknowledgment or just close
+        if (msg.event === 'save') {
+          // You can handle explicit save button click here
+        }
+        break
+      case 'export':
+        // Handle export result (e.g. PNG data)
+        if (window._exportResolver) {
+          window._exportResolver(msg.data)
+          window._exportResolver = null
+        }
+        break
     }
+  } catch (e) {
+    // Not a JSON message or not from draw.io
+  }
+}
+
+const postMessage = (action) => {
+  if (iframeRef.value && iframeRef.value.contentWindow) {
+    iframeRef.value.contentWindow.postMessage(JSON.stringify(action), '*')
+  }
+}
+
+const sendConfig = () => {
+  postMessage({
+    action: 'configure',
+    config: {
+      defaultFonts: ['Humor Sans', 'Helvetica', 'Arial'],
+    }
+  })
+}
+
+const loadXml = (xmlString) => {
+  if (!isReady.value) return
+  
+  let finalXml = xmlString
+  
+  // 1. Basic empty structure if nothing is provided
+  if (!finalXml || finalXml.trim() === '') {
+    finalXml = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>'
+  }
+  
+  // 2. Comprehensive conversion from maxGraph to mxGraph (draw.io)
+  let processedXml = finalXml
+  processedXml = processedXml.replace(/<GraphDataModel/g, '<mxGraphModel').replace(/<\/GraphDataModel>/g, '</mxGraphModel>')
+  processedXml = processedXml.replace(/<Cell\b/g, '<mxCell').replace(/<\/Cell>/g, '</mxCell>')
+  processedXml = processedXml.replace(/<Geometry\b/g, '<mxGeometry').replace(/<\/Geometry>/g, '</mxGeometry>')
+  processedXml = processedXml.replace(/<Point\b/g, '<mxPoint').replace(/<\/Point>/g, '</mxPoint>')
+  processedXml = processedXml.replace(/\b_x=/g, 'x=').replace(/\b_y=/g, 'y=')
+
+  // 3. Advanced Sanitization using DOMParser to fix dangling references
+  try {
+    const parser = new DOMParser()
+    const xmlDoc = parser.parseFromString(processedXml, 'text/xml')
+    
+    // Fix empty IDs first
+    const allCells = xmlDoc.querySelectorAll('mxCell, Cell')
+    allCells.forEach(cell => {
+      if (!cell.getAttribute('id')) {
+        cell.setAttribute('id', 'cell_' + Math.random().toString(36).substr(2, 5))
+      }
+      // CRITICAL FIX: If there's a nested mxCell inside a Cell/mxCell, remove the inner one
+      const innerMxCell = cell.querySelector('mxCell')
+      if (innerMxCell) {
+        cell.removeChild(innerMxCell)
+      }
+    })
+
+    // Collect all valid IDs
+    const validIds = new Set()
+    xmlDoc.querySelectorAll('[id]').forEach(el => validIds.add(el.getAttribute('id')))
+    
+    // Add mandatory IDs to valid set (we will ensure they exist below)
+    validIds.add('0')
+    validIds.add('1')
+
+    // Check and fix dangling references (parent, source, target)
+    xmlDoc.querySelectorAll('mxCell').forEach(cell => {
+      ['parent', 'source', 'target'].forEach(attr => {
+        const val = cell.getAttribute(attr)
+        if (val && !validIds.has(val)) {
+          console.warn(`Removing dangling reference ${attr}="${val}" from cell ${cell.getAttribute('id')}`)
+          cell.removeAttribute(attr)
+          // If parent is removed, default it to "1" (the default layer)
+          if (attr === 'parent') {
+            cell.setAttribute('parent', '1')
+          }
+        }
+      })
+    })
+
+    // Ensure Root structure exists
+    let root = xmlDoc.querySelector('root')
+    if (!root) {
+      const model = xmlDoc.querySelector('mxGraphModel')
+      if (model) {
+        root = xmlDoc.createElement('root')
+        model.appendChild(root)
+      }
+    }
+
+    if (root) {
+      if (!xmlDoc.querySelector('mxCell[id="0"]')) {
+        const cell0 = xmlDoc.createElement('mxCell')
+        cell0.setAttribute('id', '0')
+        root.insertBefore(cell0, root.firstChild)
+      }
+      if (!xmlDoc.querySelector('mxCell[id="1"]')) {
+        const cell1 = xmlDoc.createElement('mxCell')
+        cell1.setAttribute('id', '1')
+        cell1.setAttribute('parent', '0')
+        const cell0 = xmlDoc.querySelector('mxCell[id="0"]')
+        cell0.after(cell1)
+      }
+    }
+
+    processedXml = new XMLSerializer().serializeToString(xmlDoc)
+  } catch (e) {
+    console.error('XML Sanitization error:', e)
+  }
+
+  console.log('Final Sanitized XML to draw.io:', processedXml.substring(0, 200) + '...')
+  
+  postMessage({
+    action: 'load',
+    xml: processedXml,
+    autosave: 1,
+  })
+}
+
+const getXml = () => {
+  return currentXml.value
+}
+
+// Watch for external XML changes (e.g. AI updates)
+watch(() => props.xml, (newXml) => {
+  if (newXml !== currentXml.value) {
+    loadXml(newXml)
+    currentXml.value = newXml
   }
 })
 
 onMounted(() => {
-  initGraph()
-  if (props.xml) {
-    loadXml(props.xml)
-  }
+  window.addEventListener('message', handleMessage)
 })
 
 onBeforeUnmount(() => {
-  if (graph) {
-    graph.getDataModel().removeAllListeners()
-  }
+  window.removeEventListener('message', handleMessage)
 })
 
-function initGraph() {
-  const container = canvasRef.value
-  if (!container) return
-
-  try {
-    graph = new Graph(container)
-    graphRef.value = graph
-
-    const style = graph.getStylesheet().getDefaultEdgeStyle()
-    style.rounded = true
-    style.strokeWidth = 2
-    graph.getStylesheet().putDefaultEdgeStyle(style)
-
-    graph.setPanning(true)
-    graph.setTooltips(true)
-    graph.setConnectable(true)
-    graph.setEnabled(true)
-
-    new PanningHandler(graph)
-    new RubberBandHandler(graph)
-
-    graph.getView().setTranslate(0, 0)
-    graph.center()
-
-    graph.getDataModel().addListener(InternalEvent.CHANGE, () => {
-      if (!isEmittingChange) {
-        emit('change')
+// Export functionality
+const exportAsPng = () => {
+  return new Promise((resolve) => {
+    if (!isReady.value) return resolve(null)
+    
+    window._exportResolver = resolve
+    postMessage({
+      action: 'export',
+      format: 'png',
+      spin: 'Exporting...',
+    })
+    
+    // Timeout as fallback
+    setTimeout(() => {
+      if (window._exportResolver) {
+        window._exportResolver(null)
+        window._exportResolver = null
       }
-    })
-  } catch (error) {
-    console.error('maxGraph initialization error:', error)
-  }
+    }, 10000)
+  })
 }
 
-function loadXml(xmlString) {
-  if (!graph || !xmlString) return
-
-  console.log('Loading XML into graph...')
-  try {
-    isEmittingChange = true
-    const doc = xmlUtils.parseXml(xmlString)
-    
-    // 使用临时模型解码，避免直接操作主模型可能导致的递归问题
-    const tempModel = new GraphDataModel()
-    const codec = new Codec(doc)
-    codec.decode(doc.documentElement, tempModel)
-    
-    const newRoot = tempModel.getRoot()
-    if (!newRoot) {
-      console.warn('No root cell found in decoded XML')
-      return
-    }
-
-    graph.getDataModel().beginUpdate()
-    try {
-      graph.getDataModel().setRoot(newRoot)
-      
-      // 强制刷新视图
-      graph.view.revalidate()
-      graph.refresh()
-      
-      // 延迟居中，确保容器尺寸已就绪
-      setTimeout(() => {
-        graph.center()
-      }, 0)
-    } finally {
-      graph.getDataModel().endUpdate()
-    }
-    console.log('XML loaded successfully')
-  } catch (error) {
-    console.error('Load XML error:', error)
-  } finally {
-    isEmittingChange = false
-  }
-}
-
-function getXml() {
-  if (!graph) return ''
-  try {
-    const model = graph.getDataModel()
-    const codec = new Codec()
-    const node = codec.encode(model)
-    if (node) {
-      return xmlUtils.getXml(node)
-    }
-    return ''
-  } catch (error) {
-    console.error('Get XML error:', error)
-    return ''
-  }
-}
-
-function exportAsPng() {
-  if (!graph) return Promise.resolve(null)
-
-  try {
-    const bounds = graph.getGraphBounds()
-    const scale = graph.getView().getScale()
-
-    const width = Math.ceil(bounds.width * scale) + 20
-    const height = Math.ceil(bounds.height * scale) + 20
-
-    const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-    const ctx = canvas.getContext('2d')
-
-    const imgExport = new ImageExport()
-    imgExport.drawState(graph.getView(), canvas)
-
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        try {
-          const dataUrl = canvas.toDataURL('image/png')
-          resolve(dataUrl)
-        } catch (e) {
-          resolve(null)
-        }
-      }, 100)
-    })
-  } catch (error) {
-    console.error('Export PNG error:', error)
-    return Promise.resolve(null)
-  }
-}
-
-function clearCanvas() {
-  if (!graph) return
-  try {
-    graph.getDataModel().beginUpdate()
-    try {
-      graph.getDataModel().clear()
-    } finally {
-      graph.getDataModel().endUpdate()
-    }
-  } catch (error) {
-    console.error('Clear canvas error:', error)
-  }
+const clearCanvas = () => {
+  loadXml('')
 }
 
 defineExpose({
@@ -204,13 +233,27 @@ defineExpose({
 </script>
 
 <template>
-  <div ref="canvasRef" class="graph-container"></div>
+  <div class="canvas-wrapper">
+    <iframe
+      ref="iframeRef"
+      :src="DRAWIO_URL"
+      class="drawio-iframe"
+      frameborder="0"
+    ></iframe>
+  </div>
 </template>
 
 <style scoped>
-.graph-container {
+.canvas-wrapper {
   width: 100%;
   height: 100%;
   background: white;
+  position: relative;
+}
+
+.drawio-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
 }
 </style>
