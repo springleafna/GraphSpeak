@@ -128,7 +128,7 @@ defineExpose({
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.2);
   z-index: 1000;
 }
 
@@ -136,23 +136,26 @@ defineExpose({
   position: absolute;
   bottom: 80px;
   right: 20px;
-  width: 200px;
-  background: white;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  max-height: 300px;
+  width: 240px;
+  background: #ffffff;
+  border: 1px solid #d5d5d5;
+  border-radius: 12px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+  max-height: 400px;
   overflow: hidden;
+  font-family: Helvetica, Arial, sans-serif;
 }
 
 .session-list-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
+  padding: 10px 14px;
   background: #f5f5f5;
-  border-bottom: 1px solid #eee;
-  font-weight: 500;
+  border-bottom: 1px solid #d5d5d5;
+  font-weight: bold;
+  font-size: 13px;
+  color: #333;
 }
 
 .close-btn {
@@ -164,6 +167,7 @@ defineExpose({
   width: 20px;
   height: 20px;
   line-height: 1;
+  color: #666;
 }
 
 .close-btn:hover {
@@ -171,43 +175,48 @@ defineExpose({
 }
 
 .session-list-content {
-  max-height: 240px;
+  max-height: 340px;
   overflow-y: auto;
+  background: #ffffff;
 }
 
 .create-btn {
-  width: 100%;
-  padding: 10px 16px;
-  background: #2196f3;
+  width: calc(100% - 20px);
+  margin: 10px;
+  padding: 8px 12px;
+  background: #0050ef;
   color: white;
   border: none;
+  border-radius: 8px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: bold;
 }
 
 .create-btn:hover:not(:disabled) {
-  background: #1976d2;
+  background: #0040c0;
 }
 
 .create-btn:disabled {
-  background: #ccc;
+  background: #cccccc;
   cursor: not-allowed;
 }
 
 .empty {
-  padding: 20px;
+  padding: 30px 20px;
   text-align: center;
   color: #999;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .session-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 16px;
+  padding: 8px 14px;
   cursor: pointer;
-  border-bottom: 1px solid #f5f5f5;
+  border-bottom: 1px solid #eeeeee;
+  transition: background 0.1s;
 }
 
 .session-item:hover {
@@ -216,10 +225,12 @@ defineExpose({
 
 .session-item.active {
   background: #e3f2fd;
+  font-weight: bold;
 }
 
 .session-name {
-  font-size: 14px;
+  font-size: 13px;
+  color: #333;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -236,7 +247,8 @@ defineExpose({
   height: 20px;
   line-height: 1;
   margin-left: 8px;
-  color: #999;
+  color: #cccccc;
+  transition: color 0.1s;
 }
 
 .delete-btn:hover {

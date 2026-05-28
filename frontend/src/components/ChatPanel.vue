@@ -210,7 +210,7 @@ defineExpose({
 <template>
   <div class="chat-panel" :class="{ collapsed: isCollapsed }">
     <div class="chat-header" @click="isCollapsed = !isCollapsed">
-      <span class="chat-title">💬 AI 对话</span>
+      <span class="chat-title">AI 对话</span>
       <span class="toggle-icon">{{ isCollapsed ? '▶' : '▼' }}</span>
     </div>
 
@@ -282,42 +282,50 @@ defineExpose({
   position: fixed;
   bottom: 0;
   right: 20px;
-  width: 400px;
-  max-height: 500px;
-  background: white;
-  border: 1px solid #ccc;
-  border-top-left-radius: 8px;
-  border-top-right-radius: 8px;
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1);
+  width: 380px;
+  max-height: 550px;
+  background: #ffffff;
+  border: 1px solid #d5d5d5;
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
   z-index: 1000;
   display: flex;
   flex-direction: column;
+  font-family: Helvetica, Arial, sans-serif;
 }
 
 .chat-panel.collapsed {
   height: auto;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-radius: 12px 12px 0 0;
 }
 
 .chat-header {
   background: #f5f5f5;
-  border-bottom: 1px solid #eee;
-  padding: 12px 16px;
+  border-bottom: 1px solid #d5d5d5;
+  padding: 8px 12px;
   cursor: pointer;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border-radius: 12px 12px 0 0;
 }
 
 .chat-header:hover {
-  background: #eee;
+  background: #ebebeb;
 }
 
 .chat-title {
-  font-weight: 500;
+  font-weight: bold;
+  font-size: 13px;
+  color: #333;
 }
 
 .toggle-icon {
-  color: #999;
+  color: #666;
+  font-size: 10px;
 }
 
 .chat-body {
@@ -328,22 +336,24 @@ defineExpose({
 }
 
 .session-selector {
-  padding: 10px;
-  border-bottom: 1px solid #eee;
+  padding: 8px;
+  background: #ffffff;
+  border-bottom: 1px solid #eeeeee;
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 .session-select {
   flex: 1;
-  padding: 8px 12px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  padding: 5px 10px;
+  border: 1px solid #d5d5d5;
+  border-radius: 8px;
   cursor: pointer;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 14px;
+  font-size: 12px;
+  background: #ffffff;
 }
 
 .session-select:hover {
@@ -352,41 +362,43 @@ defineExpose({
 
 .session-select .arrow {
   color: #999;
-  font-size: 12px;
+  font-size: 10px;
 }
 
 .new-session-btn {
-  padding: 8px 16px;
-  background: #2196f3;
+  padding: 5px 12px;
+  background: #0050ef;
   color: white;
   border: none;
-  border-radius: 4px;
+  border-radius: 8px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 12px;
+  font-weight: bold;
 }
 
 .new-session-btn:hover {
-  background: #1976d2;
+  background: #0040c0;
 }
 
 .session-list {
   position: absolute;
-  bottom: 180px;
-  right: 20px;
-  width: 380px;
+  bottom: 160px;
+  left: 8px;
+  right: 8px;
   background: white;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  max-height: 200px;
+  border: 1px solid #d5d5d5;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  max-height: 180px;
   overflow-y: auto;
   z-index: 1001;
 }
 
 .session-option {
-  padding: 10px 16px;
+  padding: 8px 12px;
   cursor: pointer;
-  border-bottom: 1px solid #f5f5f5;
+  border-bottom: 1px solid #eeeeee;
+  font-size: 12px;
 }
 
 .session-option:hover {
@@ -395,24 +407,26 @@ defineExpose({
 
 .session-option.active {
   background: #e3f2fd;
+  font-weight: bold;
 }
 
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 10px;
-  min-height: 200px;
+  padding: 12px;
+  min-height: 250px;
+  background: #fcfcfc;
 }
 
 .empty {
   text-align: center;
-  color: #999;
+  color: #888;
   padding: 40px 20px;
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .message {
-  margin-bottom: 8px;
+  margin-bottom: 12px;
   display: flex;
 }
 
@@ -425,71 +439,83 @@ defineExpose({
 }
 
 .message-content {
-  max-width: 80%;
-  padding: 8px 12px;
-  border-radius: 8px;
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: 12px;
   word-wrap: break-word;
   white-space: pre-wrap;
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
 
 .message.user .message-content {
   background: #e3f2fd;
+  border: 1px solid #c5e1f9;
+  color: #0d47a1;
 }
 
 .message.ai .message-content {
-  background: #f5f5f5;
+  background: #ffffff;
+  border: 1px solid #d5d5d5;
+  color: #333;
 }
 
 .message.typing .message-content {
   color: #999;
+  font-style: italic;
 }
 
 .input-area {
   padding: 10px;
-  border-top: 1px solid #eee;
+  background: #f5f5f5;
+  border-top: 1px solid #d5d5d5;
   display: flex;
   gap: 8px;
 }
 
 textarea {
   flex: 1;
-  min-height: 40px;
-  max-height: 120px;
+  min-height: 36px;
+  max-height: 100px;
   resize: none;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  padding: 8px;
+  border: 1px solid #d5d5d5;
+  border-radius: 8px;
+  padding: 8px 12px;
   font-family: inherit;
-  font-size: 14px;
+  font-size: 13px;
+  background: #ffffff;
 }
 
 textarea:focus {
   outline: none;
-  border-color: #2196f3;
+  border-color: #0050ef;
 }
 
 textarea:disabled {
-  background: #f5f5f5;
+  background: #f9f9f9;
   cursor: not-allowed;
 }
 
 .send-btn {
-  padding: 8px 16px;
-  background: #2196f3;
+  padding: 6px 16px;
+  background: #0050ef;
   color: white;
   border: none;
-  border-radius: 4px;
+  border-radius: 8px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: bold;
+  align-self: flex-end;
 }
 
 .send-btn:hover:not(:disabled) {
-  background: #1976d2;
+  background: #0040c0;
 }
 
 .send-btn:disabled {
-  background: #ccc;
+  background: #cccccc;
+  color: #888;
   cursor: not-allowed;
 }
 </style>

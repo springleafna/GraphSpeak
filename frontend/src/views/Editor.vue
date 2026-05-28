@@ -186,7 +186,7 @@ function toggleSessionList() {
       <button class="toolbar-btn" @click="toggleProjectList">
         项目 ▼
       </button>
-      <button class="toolbar-btn" @click="handleSave" :disabled="isSaving">
+      <button class="toolbar-btn primary-btn" @click="handleSave" :disabled="isSaving">
         {{ isSaving ? '保存中...' : '保存' }}
       </button>
       <button class="toolbar-btn" @click="handleExport">
@@ -240,16 +240,24 @@ function toggleSessionList() {
 }
 
 .toolbar-btn {
-  padding: 8px 16px;
+  padding: 6px 14px;
   background: white;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid #d5d5d5;
+  border-radius: 8px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: bold;
+  color: #333;
 }
 
-.toolbar-btn:hover:not(:disabled) {
-  background: #e9e9e9;
+.toolbar-btn.primary-btn {
+  background: #0050ef;
+  color: white;
+  border-color: #0040c0;
+}
+
+.toolbar-btn.primary-btn:hover:not(:disabled) {
+  background: #0040c0;
 }
 
 .toolbar-btn:disabled {
