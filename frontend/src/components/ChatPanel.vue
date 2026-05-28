@@ -26,8 +26,15 @@ const messageContainerRef = ref(null)
 const isNewSessionMode = ref(false)
 const isStreaming = ref(false)
 
-// Draggable functionality
-const position = ref({ x: window.innerWidth - 400, y: window.innerHeight - 550 })
+const PANEL_WIDTH = 380
+const PANEL_HEIGHT = 520
+const PANEL_MARGIN = 20
+const HEADER_HEIGHT = 38
+
+const position = ref({
+  x: window.innerWidth - PANEL_WIDTH - PANEL_MARGIN,
+  y: window.innerHeight - PANEL_HEIGHT - PANEL_MARGIN,
+})
 const isDragging = ref(false)
 const dragOffset = ref({ x: 0, y: 0 })
 
@@ -45,9 +52,10 @@ function startDrag(event) {
 
 function handleDrag(event) {
   if (isDragging.value) {
+    const panelHeight = isCollapsed.value ? HEADER_HEIGHT : PANEL_HEIGHT
     position.value = {
-      x: event.clientX - dragOffset.value.x,
-      y: event.clientY - dragOffset.value.y
+      x: Math.min(Math.max(event.clientX - dragOffset.value.x, 0), window.innerWidth - PANEL_WIDTH),
+      y: Math.min(Math.max(event.clientY - dragOffset.value.y, 0), window.innerHeight - panelHeight),
     }
   }
 }
@@ -61,9 +69,11 @@ function stopDrag() {
 function toggleCollapse() {
   if (!isDragging.value) {
     isCollapsed.value = !isCollapsed.value
-    // Adjust position if collapsed to stay visible
-    if (isCollapsed.value) {
-      // Keep header visible
+    position.value = {
+      ...position.value,
+      y: isCollapsed.value
+        ? position.value.y + PANEL_HEIGHT - HEADER_HEIGHT
+        : position.value.y - PANEL_HEIGHT + HEADER_HEIGHT,
     }
   }
 }
@@ -253,15 +263,9 @@ defineExpose({
   <div 
     class="chat-panel" 
     :class="{ collapsed: isCollapsed, dragging: isDragging }"
-    :style="{ left: position.x + 'px', top: position.y + 'px', bottom: 'auto', right: 'auto' }"
+    :style="{ left: position.x + 'px', top: position.y + 'px' }"
   >
-    <!-- Header stays at top for dragging, but we'll change the layout order -->
-    <div class="chat-header" @mousedown="startDrag" @click="toggleCollapse">
-      <span class="chat-title">💬 AI 对话</span>
-      <span class="toggle-icon">{{ isCollapsed ? '▲' : '▼' }}</span>
-    </div>
-
-    <div v-if="!isCollapsed" class="chat-body">
+    <div class="chat-body" v-show="!isCollapsed">
       <div class="session-selector">
         <div class="session-select" @click.stop="isSessionListVisible = !isSessionListVisible">
           <span>{{ currentSessionName }}</span>
@@ -324,6 +328,11 @@ defineExpose({
         </button>
       </div>
     </div>
+
+    <div class="chat-header" @mousedown="startDrag" @click="toggleCollapse">
+      <span class="chat-title">AI 对话</span>
+      <span class="toggle-icon">{{ isCollapsed ? '▲' : '▼' }}</span>
+    </div>
   </div>
 </template>
 
@@ -331,6 +340,7 @@ defineExpose({
 .chat-panel {
   position: fixed;
   width: 380px;
+  height: 520px;
   background: #ffffff;
   border: 1px solid #d5d5d5;
   border-radius: 12px;
@@ -349,19 +359,20 @@ defineExpose({
 }
 
 .chat-panel.collapsed {
-  height: auto;
+  height: 38px;
   border-radius: 12px;
 }
 
 .chat-header {
+  height: 38px;
   background: #f5f5f5;
-  border-bottom: 1px solid #d5d5d5;
-  padding: 10px 14px;
+  border-top: 1px solid #d5d5d5;
+  padding: 0 14px;
   cursor: pointer;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-radius: 0; /* Let parent control radius */
+  flex-shrink: 0;
 }
 
 .chat-header:hover {
@@ -384,6 +395,7 @@ defineExpose({
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .session-selector {
@@ -475,9 +487,9 @@ defineExpose({
 
 .messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 12px;
-  height: 350px;
   background: #fcfcfc;
 }
 
