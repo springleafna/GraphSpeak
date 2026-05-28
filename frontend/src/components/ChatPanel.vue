@@ -13,7 +13,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['sessionChange', 'graphUpdate'])
+const emit = defineEmits(['sessionChange', 'graphUpdate', 'getContext'])
 
 const isCollapsed = ref(false)
 const isSessionListVisible = ref(false)
@@ -169,6 +169,14 @@ async function handleSend() {
     return
   }
 
+  // Get current editor context (active page XML)
+  let activePageContext = null
+  const contextResponse = {}
+  emit('getContext', contextResponse)
+  if (contextResponse.activePage) {
+    activePageContext = contextResponse.activePage
+  }
+
   let sessionId = props.sessionId
   const isNewSession = isNewSessionMode.value || !sessionId
 
@@ -206,7 +214,12 @@ async function handleSend() {
   isStreaming.value = true
 
   try {
-    await messageApi.stream(sessionId, content, (data) => {
+    // Inject active page XML into content if it exists to give AI context
+    const enrichedContent = activePageContext && activePageContext.xml 
+      ? `${content}\n\n[当前页面内容]:\n${activePageContext.xml}`
+      : content
+
+    await messageApi.stream(sessionId, enrichedContent, (data) => {
       if (data.type === 'content') {
         currentAiMessage.value.content += data.content
 

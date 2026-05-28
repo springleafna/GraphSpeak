@@ -87,10 +87,37 @@ async function handleSessionSelect(session) {
 
 async function handleGraphUpdate(xml) {
   if (canvasRef.value) {
-    canvasRef.value.loadXml(xml)
+    // Determine if we should treat this as a single page update or a full project update
+    // AI usually returns <mxGraphModel>, but sometimes it might return a full <mxfile> with one diagram
+    const hasModel = xml.includes('<mxGraphModel')
+    const hasFileWrapper = xml.includes('<mxfile>')
+    const isCurrentMultiPage = currentProject.value?.xml?.includes('<mxfile>')
+    
+    let finalXml = xml
+
+    if (hasModel && (isCurrentMultiPage || !hasFileWrapper)) {
+      // If the update contains a model, and we either already have multiple pages 
+      // or the update doesn't have its own file wrapper, we treat it as a page update.
+      const activePage = canvasRef.value.getActivePageData()
+      // Extract the mxGraphModel part if AI accidentally wrapped it in something else
+      let modelToMerge = xml
+      if (hasFileWrapper) {
+        const parser = new DOMParser()
+        const doc = parser.parseFromString(xml, 'text/xml')
+        const model = doc.querySelector('mxGraphModel')
+        if (model) {
+          modelToMerge = new XMLSerializer().serializeToString(model)
+        }
+      }
+      finalXml = canvasRef.value.mergePageXml(modelToMerge, activePage.id)
+    } else {
+      // Otherwise, load it as a full project
+      canvasRef.value.loadXml(xml)
+    }
+
     // 同步更新本地项目数据，确保 UI 状态一致
     if (currentProject.value) {
-      currentProject.value.xml = xml
+      currentProject.value.xml = finalXml
     }
     scheduleAutoSave()
   }
@@ -214,6 +241,11 @@ function toggleProjectList() {
 function toggleSessionList() {
   sessionListRef.value?.toggle()
 }
+function handleChatContext(response) {
+  if (canvasRef.value) {
+    response.activePage = canvasRef.value.getActivePageData()
+  }
+}
 </script>
 
 <template>
@@ -261,6 +293,7 @@ function toggleSessionList() {
       :session-id="currentSession?.id"
       @session-change="handleSessionSelect"
       @graph-update="handleGraphUpdate"
+      @get-context="handleChatContext"
     />
   </div>
 </template>

@@ -13,6 +13,7 @@ const emit = defineEmits(['change', 'save-request'])
 const iframeRef = ref(null)
 const isReady = ref(false)
 const currentXml = ref(props.xml)
+const currentPageInfo = ref({ id: null, name: null })
 
 // draw.io embed URL parameters
 // embed=1: enable embed mode
@@ -45,6 +46,26 @@ const handleMessage = (event) => {
         // XML updated in draw.io
         if (msg.xml) {
           currentXml.value = msg.xml
+          
+          // Try to extract page info from the XML itself if msg.details is missing
+          if (msg.xml.includes('<mxfile>')) {
+            try {
+              const parser = new DOMParser()
+              const xmlDoc = parser.parseFromString(msg.xml, 'text/xml')
+              // The active page in draw.io is usually the one without a hidden="1" attribute
+              // or just the first one if we can't tell. 
+              // But draw.io usually sends the current page in 'details' for change events.
+              if (msg.details && msg.details.currentPage) {
+                currentPageInfo.value = {
+                  id: msg.details.currentPage.id,
+                  name: msg.details.currentPage.name
+                }
+              }
+            } catch (e) {
+              console.error('Error parsing XML for page info:', e)
+            }
+          }
+          
           emit('change', msg.xml)
         }
         // Handle explicit save button click
@@ -88,7 +109,7 @@ const loadXml = (xmlString) => {
   
   // 1. Basic empty structure if nothing is provided
   if (!finalXml || finalXml.trim() === '') {
-    finalXml = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>'
+    finalXml = '<mxfile><diagram id="page-1" name="Page-1"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>'
   }
   
   // 2. Comprehensive conversion from maxGraph to mxGraph (draw.io)
@@ -99,40 +120,43 @@ const loadXml = (xmlString) => {
   processedXml = processedXml.replace(/<Point\b/g, '<mxPoint').replace(/<\/Point>/g, '</mxPoint>')
   processedXml = processedXml.replace(/\b_x=/g, 'x=').replace(/\b_y=/g, 'y=')
 
-  // 3. Advanced Sanitization using DOMParser to fix dangling references
+  // 3. Advanced Sanitization using DOMParser
   try {
     const parser = new DOMParser()
     const xmlDoc = parser.parseFromString(processedXml, 'text/xml')
     
+    // Check if it's already a full mxfile or just mxGraphModel
+    const isFullFile = xmlDoc.querySelector('mxfile')
+    
+    if (!isFullFile) {
+      // If it's just a bare model, we might want to wrap it or fix it up
+      // but for now, we'll let draw.io handle the wrapping if it's valid
+    }
+
     // Fix empty IDs first
     const allCells = xmlDoc.querySelectorAll('mxCell, Cell')
     allCells.forEach(cell => {
       if (!cell.getAttribute('id')) {
         cell.setAttribute('id', 'cell_' + Math.random().toString(36).substr(2, 5))
       }
-      // CRITICAL FIX: If there's a nested mxCell inside a Cell/mxCell, remove the inner one
       const innerMxCell = cell.querySelector('mxCell')
       if (innerMxCell) {
         cell.removeChild(innerMxCell)
       }
     })
 
-    // Collect all valid IDs
+    // Collect all valid IDs within the whole document
     const validIds = new Set()
     xmlDoc.querySelectorAll('[id]').forEach(el => validIds.add(el.getAttribute('id')))
-    
-    // Add mandatory IDs to valid set (we will ensure they exist below)
     validIds.add('0')
     validIds.add('1')
 
-    // Check and fix dangling references (parent, source, target)
+    // Fix dangling references in all mxGraphModels (could be multiple in a mxfile)
     xmlDoc.querySelectorAll('mxCell').forEach(cell => {
       ['parent', 'source', 'target'].forEach(attr => {
         const val = cell.getAttribute(attr)
         if (val && !validIds.has(val)) {
-          console.warn(`Removing dangling reference ${attr}="${val}" from cell ${cell.getAttribute('id')}`)
           cell.removeAttribute(attr)
-          // If parent is removed, default it to "1" (the default layer)
           if (attr === 'parent') {
             cell.setAttribute('parent', '1')
           }
@@ -140,38 +164,33 @@ const loadXml = (xmlString) => {
       })
     })
 
-    // Ensure Root structure exists
-    let root = xmlDoc.querySelector('root')
-    if (!root) {
-      const model = xmlDoc.querySelector('mxGraphModel')
-      if (model) {
+    // Ensure structure for each mxGraphModel found
+    xmlDoc.querySelectorAll('mxGraphModel').forEach(model => {
+      let root = model.querySelector('root')
+      if (!root) {
         root = xmlDoc.createElement('root')
         model.appendChild(root)
       }
-    }
 
-    if (root) {
-      if (!xmlDoc.querySelector('mxCell[id="0"]')) {
+      if (!root.querySelector('mxCell[id="0"]')) {
         const cell0 = xmlDoc.createElement('mxCell')
         cell0.setAttribute('id', '0')
         root.insertBefore(cell0, root.firstChild)
       }
-      if (!xmlDoc.querySelector('mxCell[id="1"]')) {
+      if (!root.querySelector('mxCell[id="1"]')) {
         const cell1 = xmlDoc.createElement('mxCell')
         cell1.setAttribute('id', '1')
         cell1.setAttribute('parent', '0')
-        const cell0 = xmlDoc.querySelector('mxCell[id="0"]')
+        const cell0 = root.querySelector('mxCell[id="0"]')
         cell0.after(cell1)
       }
-    }
+    })
 
     processedXml = new XMLSerializer().serializeToString(xmlDoc)
   } catch (e) {
     console.error('XML Sanitization error:', e)
   }
 
-  console.log('Final Sanitized XML to draw.io:', processedXml.substring(0, 200) + '...')
-  
   postMessage({
     action: 'load',
     xml: processedXml,
@@ -181,6 +200,106 @@ const loadXml = (xmlString) => {
 
 const getXml = () => {
   return currentXml.value
+}
+
+/**
+ * Extracts the XML of the currently active page from the full mxfile.
+ * If the XML is not a multi-page mxfile, returns the whole XML.
+ */
+const getActivePageData = () => {
+  const fullXml = currentXml.value
+  if (!fullXml) return { xml: '', id: null, name: null }
+
+  try {
+    const parser = new DOMParser()
+    const xmlDoc = parser.parseFromString(fullXml, 'text/xml')
+    const mxfile = xmlDoc.querySelector('mxfile')
+    
+    if (!mxfile) {
+      return { xml: fullXml, id: null, name: null }
+    }
+
+    // Try to find the active diagram. 
+    // In draw.io XML, the active diagram is usually the one without a hidden attribute 
+    // or we can use the one tracked by currentPageInfo
+    const diagrams = Array.from(xmlDoc.querySelectorAll('diagram'))
+    let activeDiagram = diagrams.find(d => d.getAttribute('id') === currentPageInfo.value.id)
+    
+    if (!activeDiagram && diagrams.length > 0) {
+      activeDiagram = diagrams[0] // Fallback to first page
+    }
+
+    if (activeDiagram) {
+      const model = activeDiagram.querySelector('mxGraphModel')
+      return {
+        xml: model ? new XMLSerializer().serializeToString(model) : '',
+        id: activeDiagram.getAttribute('id'),
+        name: activeDiagram.getAttribute('name')
+      }
+    }
+  } catch (e) {
+    console.error('Error extracting active page data:', e)
+  }
+
+  return { xml: fullXml, id: null, name: null }
+}
+
+/**
+ * Merges a single page's mxGraphModel XML back into the full mxfile.
+ */
+const mergePageXml = (pageXml, pageId) => {
+  let fullXml = currentXml.value
+  
+  // If the incoming XML is already a full mxfile, we should try to merge its diagrams
+  // instead of just replacing the whole thing, but for now let's assume pageXml 
+  // is just the mxGraphModel part.
+  const isIncomingFull = pageXml.includes('<mxfile>')
+  const isCurrentFull = fullXml && fullXml.includes('<mxfile>')
+
+  try {
+    const parser = new DOMParser()
+    
+    // 1. Ensure we have a working fullXml base
+    if (!isCurrentFull) {
+      // If current is not full, wrap it now to create a multi-page structure
+      const baseXml = fullXml && fullXml.trim() !== '' ? fullXml : '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>'
+      fullXml = `<mxfile><diagram id="page-1" name="Page-1">${baseXml}</diagram></mxfile>`
+    }
+
+    const xmlDoc = parser.parseFromString(fullXml, 'text/xml')
+    const diagrams = Array.from(xmlDoc.querySelectorAll('diagram'))
+    
+    // 2. Identify target diagram
+    let targetDiagram = diagrams.find(d => d.getAttribute('id') === pageId)
+    if (!targetDiagram && currentPageInfo.value.id) {
+      targetDiagram = diagrams.find(d => d.getAttribute('id') === currentPageInfo.value.id)
+    }
+    if (!targetDiagram && diagrams.length > 0) {
+      targetDiagram = diagrams[0] // Default to first page
+    }
+
+    // 3. Extract the model to insert
+    const incomingDoc = parser.parseFromString(pageXml, 'text/xml')
+    const incomingModel = incomingDoc.querySelector('mxGraphModel')
+    
+    if (incomingModel && targetDiagram) {
+      const oldModel = targetDiagram.querySelector('mxGraphModel')
+      if (oldModel) {
+        targetDiagram.replaceChild(xmlDoc.importNode(incomingModel, true), oldModel)
+      } else {
+        targetDiagram.appendChild(xmlDoc.importNode(incomingModel, true))
+      }
+      
+      const updatedFullXml = new XMLSerializer().serializeToString(xmlDoc)
+      loadXml(updatedFullXml)
+      currentXml.value = updatedFullXml
+      emit('change', updatedFullXml)
+      return updatedFullXml
+    }
+  } catch (e) {
+    console.error('Error merging page XML:', e)
+  }
+  return fullXml
 }
 
 // Watch for external XML changes (e.g. AI updates)
@@ -228,6 +347,8 @@ const clearCanvas = () => {
 defineExpose({
   loadXml,
   getXml,
+  getActivePageData,
+  mergePageXml,
   exportAsPng,
   clearCanvas,
 })
