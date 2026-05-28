@@ -1,12 +1,15 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { projectApi } from '@/api'
 
-const emit = defineEmits(['select', 'create', 'delete'])
+const emit = defineEmits(['select', 'create', 'delete', 'rename'])
 
 const isVisible = ref(false)
 const projects = ref([])
 const loading = ref(false)
+const editingProjectId = ref(null)
+const editingName = ref('')
+const editInputRef = ref(null)
 
 onMounted(() => {
   loadProjects()
@@ -35,13 +38,41 @@ async function handleCreate() {
 }
 
 async function handleSelect(project) {
+  if (editingProjectId.value === project.id) return
   emit('select', project)
   isVisible.value = false
 }
 
+async function handleRename(project, event) {
+  event.stopPropagation()
+  editingProjectId.value = project.id
+  editingName.value = project.name
+  await nextTick()
+  editInputRef.value?.[0]?.focus()
+}
+
+async function submitRename(project) {
+  const newName = editingName.value.trim()
+  if (!newName || newName === project.name) {
+    editingProjectId.value = null
+    return
+  }
+
+  try {
+    await projectApi.update(project.id, { name: newName })
+    project.name = newName
+    emit('rename', project)
+  } catch (error) {
+    console.error('Rename project error:', error)
+    alert('重命名失败')
+  } finally {
+    editingProjectId.value = null
+  }
+}
+
 async function handleDelete(project, event) {
   event.stopPropagation()
-  if (!confirm(`确定要删除项目 "${project.name}" 吗？`)) return
+  if (editingProjectId.value === project.id) return
 
   try {
     await projectApi.delete(project.id)
@@ -91,8 +122,23 @@ defineExpose({
           class="project-item"
           @click="handleSelect(project)"
         >
-          <span class="project-name">{{ project.name }}</span>
-          <button class="delete-btn" @click="handleDelete(project, $event)" title="删除">×</button>
+          <div v-if="editingProjectId === project.id" class="edit-wrapper" @click.stop>
+            <input
+              ref="editInputRef"
+              v-model="editingName"
+              class="edit-input"
+              @blur="submitRename(project)"
+              @keypress.enter="submitRename(project)"
+              @click.stop
+            />
+          </div>
+          <template v-else>
+            <span class="project-name" :title="project.name">{{ project.name }}</span>
+            <div class="project-actions">
+              <button class="action-btn rename-btn" @click="handleRename(project, $event)" title="重命名">✎</button>
+              <button class="action-btn delete-btn" @click="handleDelete(project, $event)" title="删除">×</button>
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -195,33 +241,69 @@ defineExpose({
   cursor: pointer;
   border-bottom: 1px solid #eeeeee;
   transition: background 0.1s;
+  height: 40px;
 }
 
 .project-item:hover {
-  background: #f5f5f5;
+  background: #f9f9f9;
+}
+
+.edit-wrapper {
+  flex: 1;
+  display: flex;
+}
+
+.edit-input {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid #0050ef;
+  border-radius: 4px;
+  font-size: 13px;
+  outline: none;
 }
 
 .project-name {
+  flex: 1;
   font-size: 13px;
   color: #333;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
+  margin-right: 8px;
 }
 
-.delete-btn {
+.project-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.project-item:hover .project-actions {
+  opacity: 1;
+}
+
+.action-btn {
   background: none;
   border: none;
-  font-size: 18px;
+  font-size: 16px;
   cursor: pointer;
-  padding: 0;
-  width: 20px;
-  height: 20px;
-  line-height: 1;
-  margin-left: 8px;
-  color: #cccccc;
-  transition: color 0.1s;
+  color: #999;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+.action-btn:hover {
+  background: #eee;
+  color: #333;
+}
+
+.rename-btn:hover {
+  color: #0050ef;
 }
 
 .delete-btn:hover {

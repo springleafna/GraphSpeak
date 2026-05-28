@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import Canvas from '@/components/Canvas.vue'
 import ProjectList from '@/components/ProjectList.vue'
@@ -17,6 +17,9 @@ const canvasRef = ref(null)
 const chatPanelRef = ref(null)
 const isSaving = ref(false)
 const autoSaveTimer = ref(null)
+const isRenaming = ref(false)
+const renamingName = ref('')
+const nameInputRef = ref(null)
 
 onMounted(async () => {
   await loadProjects()
@@ -155,6 +158,39 @@ async function handleExport() {
   }
 }
 
+async function startRename() {
+  if (!currentProject.value) return
+  renamingName.value = currentProject.value.name
+  isRenaming.value = true
+  await nextTick()
+  nameInputRef.value?.focus()
+}
+
+async function submitRename() {
+  const newName = renamingName.value.trim()
+  if (!newName || !currentProject.value || newName === currentProject.value.name) {
+    isRenaming.value = false
+    return
+  }
+
+  try {
+    await projectApi.update(currentProject.value.id, { name: newName })
+    currentProject.value.name = newName
+    projectListRef.value?.refresh()
+  } catch (error) {
+    console.error('Rename error:', error)
+    alert('重命名失败')
+  } finally {
+    isRenaming.value = false
+  }
+}
+
+function handleProjectRename(updatedProject) {
+  if (currentProject.value?.id === updatedProject.id) {
+    currentProject.value.name = updatedProject.name
+  }
+}
+
 function handleKeyPress(event) {
   if (event.ctrlKey && event.key === 's') {
     event.preventDefault()
@@ -187,7 +223,19 @@ function toggleSessionList() {
         项目 ▼
       </button>
       <div class="project-info" v-if="currentProject">
-        {{ currentProject.name }}
+        <div v-if="isRenaming" class="rename-container">
+          <input
+            ref="nameInputRef"
+            v-model="renamingName"
+            class="rename-input"
+            @blur="submitRename"
+            @keypress.enter="submitRename"
+          />
+        </div>
+        <div v-else class="project-name" @click="startRename" title="点击重命名">
+          {{ currentProject.name }}
+          <span class="edit-icon">✎</span>
+        </div>
       </div>
     </div>
 
@@ -204,6 +252,7 @@ function toggleSessionList() {
       ref="projectListRef"
       @select="handleProjectSelect"
       @create="createNewProject"
+      @rename="handleProjectRename"
     />
 
     <ChatPanel
@@ -264,6 +313,45 @@ function toggleSessionList() {
   margin-left: auto;
   font-size: 14px;
   color: #666;
+}
+
+.project-name {
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.project-name:hover {
+  background: #eee;
+  color: #333;
+}
+
+.edit-icon {
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.project-name:hover .edit-icon {
+  opacity: 1;
+}
+
+.rename-container {
+  display: flex;
+  align-items: center;
+}
+
+.rename-input {
+  padding: 4px 8px;
+  border: 1px solid #0050ef;
+  border-radius: 4px;
+  font-size: 14px;
+  outline: none;
+  width: 200px;
 }
 
 .canvas-container {
