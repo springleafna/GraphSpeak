@@ -65,18 +65,32 @@ frontend/
 - 悬浮窗样式
 - 展示项目列表
 - 新建项目按钮
+- 删除项目按钮
 - 选择项目事件
 - 切换显示/隐藏
 
 ---
 
-## 步骤5：AI对话面板开发
+## 步骤5：会话列表组件开发
 
-### 5.1 创建 ChatPanel.vue
+### 5.1 创建 SessionList.vue
+
+实现以下功能：
+- 悬浮窗样式
+- 展示会话列表
+- 新建会话按钮
+- 删除会话按钮
+- 选择会话事件
+- 切换显示/隐藏
+
+---
+
+## 步骤6：AI对话面板开发
+
+### 6.1 创建 ChatPanel.vue
 
 实现以下功能：
 - 可折叠/展开的对话面板
-- 会话列表选择
 - 消息展示区域
 - 输入框和发送按钮
 - **SSE 流式接收 AI 响应**
@@ -84,41 +98,58 @@ frontend/
 - 消息滚动到底部
 - 接收图形数据并更新画布
 
-### 5.2 实现 SSE 流式接收
+### 6.2 实现 SSE 流式接收
 
 ```javascript
 async function sendMessage() {
-  // 创建 SSE 连接
-  const eventSource = new EventSource(
-    `${BASE_URL}/api/messages/stream?sessionId=${currentSessionId.value}&content=${encodeURIComponent(inputText.value)}`
-  )
-
-  eventSource.onmessage = (event) => {
-    const data = JSON.parse(event.data)
-    // 根据数据类型处理
-    if (data.type === 'content') {
-      // 流式文本内容
-      updateAiMessage(data.content)
-    } else if (data.type === 'graph') {
-      // 图形数据
-      handleGraphUpdate(data.graphData)
-    } else if (data.type === 'end') {
-      // 结束
-      eventSource.close()
-    }
+  const response = await fetch(`${BASE_URL}/api/messages/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      sessionId: currentSessionId.value,
+      content: inputText.value
+    })
+  })
+  
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  
+  function readStream() {
+    reader.read().then(({ done, value }) => {
+      if (done) return
+      const chunk = decoder.decode(value, { stream: true })
+      const lines = chunk.split('\n')
+      lines.forEach(line => {
+        if (line.startsWith('data: ')) {
+          const data = JSON.parse(line.slice(6))
+          switch(data.type) {
+            case 'content':
+              updateAiMessage(data.content)
+              break
+            case 'graph':
+              handleGraphUpdate(data.graphData)
+              break
+            case 'end':
+              // 结束
+              break
+          }
+        }
+      })
+      readStream()
+    })
   }
-
-  eventSource.onerror = () => {
-    eventSource.close()
-  }
+  
+  readStream()
 }
 ```
 
 ---
 
-## 步骤6：API 封装
+## 步骤7：API 封装
 
-### 6.1 创建 api/index.js
+### 7.1 创建 api/index.js
 
 实现以下 API：
 - `getProjects()` - 获取项目列表
@@ -127,8 +158,9 @@ async function sendMessage() {
 - `deleteProject(id)` - 删除项目
 - `getSessions(projectId)` - 获取会话列表
 - `createSession(data)` - 创建会话
+- `deleteSession(id)` - 删除会话
 - `getMessages(sessionId)` - 获取消息列表
-- **SSE 流式消息处理** - 通过 EventSource 接收流式响应
+- `sendMessage(data)` - SSE 流式发送消息（POST）
 
 ---
 
@@ -140,9 +172,12 @@ async function sendMessage() {
 - 顶部工具栏（项目、保存、导出）
 - 画布区域
 - 集成项目列表组件
+- 集成会话列表组件
 - 集成 AI 对话面板
 - 处理画布变化事件
 - 处理 AI 图形数据更新
+- 实现自动保存（Ctrl+S 或画布变化时）
+- 实现前端导出 PNG 功能
 
 ---
 

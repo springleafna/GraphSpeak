@@ -20,7 +20,8 @@ npm install -D typescript @types/node @types/express
 
 ```bash
 npm install mysql2
-npm install typeorm
+npm install @prisma/client
+npm install -D prisma
 ```
 
 ### 1.4 安装 LangChain.js
@@ -51,9 +52,10 @@ backend/
 │   ├── main.ts              # 应用入口
 │   ├── app.module.ts        # 根模块
 │   ├── common/
-│   │   ├── database/        # 数据库配置
-│   │   │   └── database.module.ts
-│   │   └── prompts/         # AI提示词文件目录
+│   │   └── prisma/          # Prisma 服务
+│   │       └── prisma.service.ts
+│   ├── assets/              # 资源文件目录
+│   │   └── prompts/         # AI提示词文件
 │   │       ├── graph.txt    # 图形绘制提示词
 │   │       └── session.txt  # 会话标题提示词
 │   ├── modules/
@@ -61,7 +63,8 @@ backend/
 │   │   ├── session/         # 会话模块
 │   │   ├── message/         # 消息模块
 │   │   └── ai/              # AI模块
-│   └── entities/            # 数据库实体
+└── prisma/                  # Prisma 配置
+    └── schema.prisma        # 数据模型定义
 ```
 
 ---
@@ -70,7 +73,7 @@ backend/
 
 ### 3.1 创建图形绘制提示词
 
-创建 `src/common/prompts/graph.txt`，编写 AI 绘图的系统提示词，包括：
+创建 `src/assets/prompts/graph.txt`，编写 AI 绘图的系统提示词，包括：
 - 角色定义
 - 支持的图形类型（流程图、架构图、时序图、类图、ER图等）
 - 输出格式要求（mxGraph XML 格式）
@@ -78,7 +81,7 @@ backend/
 
 ### 3.2 创建会话标题提示词
 
-创建 `src/common/prompts/session.txt`，编写生成会话名称的系统提示词，包括：
+创建 `src/assets/prompts/session.txt`，编写生成会话名称的系统提示词，包括：
 - 任务说明
 - 字数限制（不超过10个字）
 - 语言要求
@@ -87,25 +90,47 @@ backend/
 
 ## 步骤4：数据库配置
 
-### 4.1 创建数据库模块
+### 4.1 初始化 Prisma
 
-创建 `src/common/database/database.module.ts`，配置 TypeORM 连接 MySQL。
+```bash
+npx prisma init
+```
+
+### 4.2 配置数据库连接
+
+编辑 `prisma/schema.prisma`，配置数据库连接。
+
+### 4.3 创建 Prisma 服务
+
+创建 `src/common/prisma/prisma.service.ts`，封装 Prisma Client 实例。
 
 ---
 
-## 步骤5：创建实体
+## 步骤5：创建数据模型
 
-### 5.1 项目实体
+### 5.1 定义 Project 模型
 
-创建 `src/entities/project.entity.ts`，定义 Project 实体结构。
+在 `prisma/schema.prisma` 中定义 Project 模型。
 
-### 5.2 会话实体
+### 5.2 定义 Session 模型
 
-创建 `src/entities/session.entity.ts`，定义 Session 实体结构。
+在 `prisma/schema.prisma` 中定义 Session 模型。
 
-### 5.3 消息实体
+### 5.3 定义 Message 模型
 
-创建 `src/entities/message.entity.ts`，定义 Message 实体结构。
+在 `prisma/schema.prisma` 中定义 Message 模型。
+
+### 5.4 生成 Prisma Client
+
+```bash
+npx prisma generate
+```
+
+### 5.5 执行迁移
+
+```bash
+npx prisma migrate dev --name init
+```
 
 ---
 
@@ -119,6 +144,7 @@ backend/
 - 创建项目
 - 更新项目
 - 软删除项目
+- 使用 Prisma Client 操作数据库
 
 ### 6.2 创建项目控制器
 
@@ -126,7 +152,7 @@ backend/
 
 ### 6.3 创建项目模块
 
-创建 `src/modules/project/project.module.ts`。
+创建 `src/modules/project/project.module.ts`，注入 Prisma 服务。
 
 ---
 
@@ -141,6 +167,7 @@ backend/
 - 更新会话名称
 - 软删除会话
 - **异步更新会话名称**（调用 AI 生成）
+- 使用 Prisma Client 操作数据库
 
 ### 7.2 创建会话控制器
 
@@ -148,7 +175,7 @@ backend/
 
 ### 7.3 创建会话模块
 
-创建 `src/modules/session/session.module.ts`。
+创建 `src/modules/session/session.module.ts`，注入 Prisma 服务。
 
 ---
 
@@ -159,17 +186,17 @@ backend/
 创建 `src/modules/message/message.service.ts`，实现以下功能：
 - 按会话ID查找消息（按创建时间倒序）
 - 创建消息
+- 使用 Prisma Client 操作数据库
 
 ### 8.2 创建消息控制器
 
 创建 `src/modules/message/message.controller.ts`，实现以下端点：
 - GET `/api/messages` - 获取消息列表
-- POST `/api/messages` - 发送消息
-- **GET `/api/messages/stream` - SSE 流式消息接口**
+- **POST `/api/messages/stream` - SSE 流式消息接口**
 
 ### 8.3 创建消息模块
 
-创建 `src/modules/message/message.module.ts`。
+创建 `src/modules/message/message.module.ts`，注入 Prisma 服务。
 
 ---
 
@@ -196,8 +223,9 @@ backend/
 
 ### 10.1 在消息控制器中添加 SSE 端点
 
-实现 `GET /api/messages/stream` 接口：
-- 接收查询参数：sessionId, content
+实现 `POST /api/messages/stream` 接口：
+- 接收请求体：sessionId, content
+- 保存用户消息到数据库
 - 返回 `text/event-stream` 响应
 - 流式推送以下类型的数据：
   ```typescript
@@ -214,8 +242,9 @@ backend/
 ### 10.2 流式消息保存
 
 在流式输出过程中：
-- 收到第一条用户消息时保存到数据库
+- 保存用户消息到数据库
 - 流式输出完成后保存完整 AI 消息
+- 如果是会话的第一条消息，异步调用 AI 生成会话名称
 
 ---
 
@@ -260,7 +289,24 @@ npm run start:dev
 
 ---
 
+## 步骤15：初始化数据库
+
+```bash
+npx prisma migrate dev --name init
+npx prisma generate
+```
+
+---
+
 ## 核心要点
+
+### Prisma 使用
+
+1. **配置文件**：`prisma/schema.prisma`
+2. **初始化**：`npx prisma init`
+3. **生成 Client**：`npx prisma generate`
+4. **执行迁移**：`npx prisma migrate dev --name init`
+5. **服务注入**：在各模块中注入 Prisma 服务
 
 ### SSE 流式输出实现
 
@@ -270,7 +316,7 @@ npm run start:dev
 
 ### AI 提示词管理
 
-1. **提示词文件位置**：`src/common/prompts/`
+1. **提示词文件位置**：`src/assets/prompts/`
 2. **文件格式**：纯文本
 3. **读取方式**：服务启动时读取或每次调用时读取
 4. **文件分离**：

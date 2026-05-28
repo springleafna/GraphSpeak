@@ -6,12 +6,71 @@
 |------|-----|
 | 数据库类型 | MySQL |
 | 版本 | 8.x |
+| ORM 框架 | Prisma |
 | 字符集 | utf8mb4 |
 | 排序规则 | utf8mb4_unicode_ci |
 
 ---
 
-## 表结构
+## Prisma Schema
+
+### 数据模型定义
+
+```prisma
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Project {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @db.VarChar(20)
+  xml       String?  @db.LongText
+  json      Json?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  sessions Session[]
+
+  @@map("project")
+}
+
+model Session {
+  id        BigInt   @id @default(autoincrement())
+  projectId BigInt   @map("project_id")
+  name      String   @default("新会话") @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  project  Project  @relation(fields: [projectId], references: [id])
+  messages Message[]
+
+  @@map("session")
+}
+
+model Message {
+  id        BigInt   @id @default(autoincrement())
+  sessionId BigInt   @map("session_id")
+  role      String   @db.VarChar(10)
+  content   String   @db.VarChar(2000)
+  createdAt DateTime @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  session   Session  @relation(fields: [sessionId], references: [id])
+
+  @@map("message")
+}
+```
+
+---
+
+## 表结构说明
 
 ### 1. project（项目表）
 
@@ -23,8 +82,8 @@
 | name | VARCHAR(20) | 项目名称 | NOT NULL |
 | xml | LONGTEXT | 图形XML数据（mxGraph格式） | NULL |
 | json | JSON | 图形JSON数据 | NULL |
-| created_at | DATETIME | 创建时间 | NOT NULL |
-| updated_at | DATETIME | 更新时间 | NOT NULL |
+| created_at | DATETIME | 创建时间 | NOT NULL, DEFAULT CURRENT_TIMESTAMP |
+| updated_at | DATETIME | 更新时间 | NOT NULL, DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP |
 | deleted_at | DATETIME | 删除时间（软删除） | NULL |
 
 ---
@@ -37,9 +96,9 @@
 |--------|------|------|------|
 | id | BIGINT | 会话ID | PRIMARY KEY, AUTO_INCREMENT |
 | project_id | BIGINT | 关联项目ID | NOT NULL |
-| name | VARCHAR(255) | 会话名称（AI基于第一条消息自动生成） | NOT NULL |
-| created_at | DATETIME | 创建时间 | NOT NULL |
-| updated_at | DATETIME | 更新时间 | NOT NULL |
+| name | VARCHAR(255) | 会话名称（默认"新会话"，AI基于第一条消息异步生成） | NOT NULL, DEFAULT '新会话' |
+| created_at | DATETIME | 创建时间 | NOT NULL, DEFAULT CURRENT_TIMESTAMP |
+| updated_at | DATETIME | 更新时间 | NOT NULL, DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP |
 | deleted_at | DATETIME | 删除时间（软删除） | NULL |
 
 ---
@@ -54,7 +113,8 @@
 | session_id | BIGINT | 关联合会话ID | NOT NULL |
 | role | VARCHAR(10) | 角色（user/ai） | NOT NULL |
 | content | VARCHAR(2000) | 消息内容 | NOT NULL |
-| created_at | DATETIME | 创建时间 | NOT NULL |
+| created_at | DATETIME | 创建时间 | NOT NULL, DEFAULT CURRENT_TIMESTAMP |
+| deleted_at | DATETIME | 删除时间（软删除） | NULL |
 
 ---
 
@@ -90,7 +150,42 @@ project (1) ──────< (n) session (1) ──────< (n) message
 
 ---
 
-## SQL 建表语句
+## 使用 Prisma 初始化数据库
+
+### 1. 初始化 Prisma
+
+```bash
+npx prisma init
+```
+
+### 2. 配置数据库连接
+
+编辑 `.env` 文件：
+```
+DATABASE_URL="mysql://root:password@localhost:3306/graphspeakspeak"
+```
+
+### 3. 定义 Schema
+
+将上述 Prisma Schema 内容写入 `prisma/schema.prisma`。
+
+### 4. 生成 Prisma Client
+
+```bash
+npx prisma generate
+```
+
+### 5. 执行数据库迁移
+
+```bash
+npx prisma migrate dev --name init
+```
+
+---
+
+## SQL 建表语句（参考）
+
+Prisma 会自动生成以下 SQL：
 
 ```sql
 -- 创建数据库
@@ -98,16 +193,14 @@ CREATE DATABASE IF NOT EXISTS graphspeak
 CHARACTER SET utf8mb4
 COLLATE utf8mb4_unicode_ci;
 
-USE graphspeak;
-
 -- 项目表
 CREATE TABLE project (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(20) NOT NULL,
     xml LONGTEXT,
     json JSON,
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at DATETIME
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -115,9 +208,9 @@ CREATE TABLE project (
 CREATE TABLE session (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     project_id BIGINT NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL,
+    name VARCHAR(255) NOT NULL DEFAULT '新会话',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at DATETIME
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -127,7 +220,8 @@ CREATE TABLE message (
     session_id BIGINT NOT NULL,
     role VARCHAR(10) NOT NULL,
     content VARCHAR(2000) NOT NULL,
-    created_at DATETIME NOT NULL
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at DATETIME
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
@@ -135,7 +229,9 @@ CREATE TABLE message (
 
 ## 注意事项
 
-- 无外键约束（应用层控制）
-- 暂不考虑索引（后续按需添加）
-- 所有时间字段使用 DATETIME 类型
+- 使用 Prisma 管理数据库
+- Prisma 会自动处理类型转换和查询
+- 软删除通过 `deletedAt` 字段实现
+- 所有时间字段自动管理
 - 字符集统一使用 utf8mb4
+- 关系通过 Prisma Schema 定义

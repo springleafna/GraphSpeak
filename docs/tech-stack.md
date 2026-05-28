@@ -16,4 +16,5 @@
 | NestJS | ^10.x |
 | TypeScript | ^5.x |
 | LangChain.js | ^0.x |
+| Prisma | ^5.x |
 | MySQL | ^8.x |

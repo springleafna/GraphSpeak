@@ -24,7 +24,7 @@ GraphSpeak/
 | 层 | 技术 |
 |---|------|
 | 前端 | Vue3 + Vite + JavaScript + mxGraph |
-| 后端 | NestJS + TypeScript + TypeORM + MySQL |
+| 后端 | NestJS + TypeScript + Prisma + MySQL |
 | AI | LangChain.js + OpenAI/Claude API |
 
 ## 核心功能
@@ -70,7 +70,7 @@ Draw.io 风格：
 - `session` - 会话表
 - `message` - 消息表
 
-所有表支持软删除（deleted_at 字段）。
+使用 Prisma 管理数据库，所有表支持软删除（deletedAt 字段）。
 
 ## 开发指南
 
