@@ -5,11 +5,14 @@
 ### 1.1 创建 NestJS 项目
 
 ```bash
+# 全局安装 NestJS CLI（只需安装一次）
+npm install -g @nestjs/cli
+
+nest new backend
+# 执行此命令后，终端会提示你选择包管理器，选择 npm 即可。
+
+# 进入项目目录
 cd backend
-npm init -y
-npm install @nestjs/common @nestjs/core @nestjs/platform-express reflect-metadata rxjs
-npm install -D @nestjs/cli @nestjs/schematics
-npm install -D typescript @types/node @types/express
 ```
 
 ### 1.2 配置 TypeScript

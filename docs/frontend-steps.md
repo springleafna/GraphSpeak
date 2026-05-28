@@ -5,8 +5,11 @@
 ### 1.1 创建 Vue3 项目
 
 ```bash
+npm create vue@latest
+# 输入项目名称 frontend
+# 选择js
+# 选择组件 vue-router
 cd frontend
-npm create vite@latest . -- --template vue
 ```
 
 ### 1.2 安装依赖
