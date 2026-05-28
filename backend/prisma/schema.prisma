@@ -1,0 +1,49 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @db.VarChar(20)
+  xml       String?  @db.LongText
+  json      Json?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  sessions Session[]
+
+  @@map("project")
+}
+
+model Session {
+  id        BigInt   @id @default(autoincrement())
+  projectId BigInt   @map("project_id")
+  name      String   @default("新会话") @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  project  Project  @relation(fields: [projectId], references: [id])
+  messages Message[]
+
+  @@map("session")
+}
+
+model Message {
+  id        BigInt   @id @default(autoincrement())
+  sessionId BigInt   @map("session_id")
+  role      String   @db.VarChar(10)
+  content   String   @db.LongText
+  createdAt DateTime @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  session Session @relation(fields: [sessionId], references: [id])
+
+  @@map("message")
+}

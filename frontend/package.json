@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "mxgraph": "^4.2.2",
+    "@maxgraph/core": "^0.23.0",
     "vue": "^3.5.32",
     "vue-router": "^5.0.4"
   },

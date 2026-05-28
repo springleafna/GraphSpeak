@@ -58,7 +58,7 @@ model Message {
   id        BigInt   @id @default(autoincrement())
   sessionId BigInt   @map("session_id")
   role      String   @db.VarChar(10)
-  content   String   @db.VarChar(2000)
+  content   String   @db.LongText
   createdAt DateTime @default(now()) @map("created_at")
   deletedAt DateTime? @map("deleted_at")
 
@@ -219,7 +219,7 @@ CREATE TABLE message (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     session_id BIGINT NOT NULL,
     role VARCHAR(10) NOT NULL,
-    content VARCHAR(2000) NOT NULL,
+    content LONGTEXT NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at DATETIME
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
