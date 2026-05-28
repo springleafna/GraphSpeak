@@ -186,12 +186,6 @@ function toggleSessionList() {
       <button class="toolbar-btn" @click="toggleProjectList">
         项目 ▼
       </button>
-      <button class="toolbar-btn primary-btn" @click="handleSave" :disabled="isSaving">
-        {{ isSaving ? '保存中...' : '保存' }}
-      </button>
-      <button class="toolbar-btn" @click="handleExport">
-        导出
-      </button>
       <div class="project-info" v-if="currentProject">
         {{ currentProject.name }}
       </div>
@@ -202,6 +196,7 @@ function toggleSessionList() {
         ref="canvasRef"
         :xml="currentProject?.xml"
         @change="handleCanvasChange"
+        @save-request="handleSave"
       />
     </div>
 

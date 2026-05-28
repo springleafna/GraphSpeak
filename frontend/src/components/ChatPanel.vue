@@ -26,6 +26,48 @@ const messageContainerRef = ref(null)
 const isNewSessionMode = ref(false)
 const isStreaming = ref(false)
 
+// Draggable functionality
+const position = ref({ x: window.innerWidth - 400, y: window.innerHeight - 550 })
+const isDragging = ref(false)
+const dragOffset = ref({ x: 0, y: 0 })
+
+function startDrag(event) {
+  if (event.target.closest('.chat-header')) {
+    isDragging.value = true
+    dragOffset.value = {
+      x: event.clientX - position.value.x,
+      y: event.clientY - position.value.y
+    }
+    window.addEventListener('mousemove', handleDrag)
+    window.addEventListener('mouseup', stopDrag)
+  }
+}
+
+function handleDrag(event) {
+  if (isDragging.value) {
+    position.value = {
+      x: event.clientX - dragOffset.value.x,
+      y: event.clientY - dragOffset.value.y
+    }
+  }
+}
+
+function stopDrag() {
+  isDragging.value = false
+  window.removeEventListener('mousemove', handleDrag)
+  window.removeEventListener('mouseup', stopDrag)
+}
+
+function toggleCollapse() {
+  if (!isDragging.value) {
+    isCollapsed.value = !isCollapsed.value
+    // Adjust position if collapsed to stay visible
+    if (isCollapsed.value) {
+      // Keep header visible
+    }
+  }
+}
+
 watch(() => props.sessionId, async (newId) => {
   if (newId) {
     isNewSessionMode.value = false
@@ -208,21 +250,29 @@ defineExpose({
 </script>
 
 <template>
-  <div class="chat-panel" :class="{ collapsed: isCollapsed }">
-    <div class="chat-header" @click="isCollapsed = !isCollapsed">
-      <span class="chat-title">AI 对话</span>
-      <span class="toggle-icon">{{ isCollapsed ? '▶' : '▼' }}</span>
+  <div 
+    class="chat-panel" 
+    :class="{ collapsed: isCollapsed, dragging: isDragging }"
+    :style="{ left: position.x + 'px', top: position.y + 'px', bottom: 'auto', right: 'auto' }"
+  >
+    <!-- Header stays at top for dragging, but we'll change the layout order -->
+    <div class="chat-header" @mousedown="startDrag" @click="toggleCollapse">
+      <span class="chat-title">💬 AI 对话</span>
+      <span class="toggle-icon">{{ isCollapsed ? '▲' : '▼' }}</span>
     </div>
 
     <div v-if="!isCollapsed" class="chat-body">
       <div class="session-selector">
-        <div class="session-select" @click="isSessionListVisible = !isSessionListVisible">
+        <div class="session-select" @click.stop="isSessionListVisible = !isSessionListVisible">
           <span>{{ currentSessionName }}</span>
           <span class="arrow">▼</span>
         </div>
         <button class="new-session-btn" @click="handleCreateSession">新建会话</button>
       </div>
 
+      <!-- Overlay for closing session list -->
+      <div v-if="isSessionListVisible" class="session-list-overlay" @click="isSessionListVisible = false"></div>
+      
       <div class="session-list" v-if="isSessionListVisible">
         <div
           v-for="session in sessions"
@@ -280,37 +330,38 @@ defineExpose({
 <style scoped>
 .chat-panel {
   position: fixed;
-  bottom: 0;
-  right: 20px;
   width: 380px;
-  max-height: 550px;
   background: #ffffff;
   border: 1px solid #d5d5d5;
-  border-top-left-radius: 12px;
-  border-top-right-radius: 12px;
-  box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
   z-index: 1000;
   display: flex;
   flex-direction: column;
   font-family: Helvetica, Arial, sans-serif;
+  user-select: none;
+  overflow: hidden;
+}
+
+.chat-panel.dragging {
+  opacity: 0.8;
+  cursor: grabbing;
 }
 
 .chat-panel.collapsed {
   height: auto;
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
-  border-radius: 12px 12px 0 0;
+  border-radius: 12px;
 }
 
 .chat-header {
   background: #f5f5f5;
   border-bottom: 1px solid #d5d5d5;
-  padding: 8px 12px;
+  padding: 10px 14px;
   cursor: pointer;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-radius: 12px 12px 0 0;
+  border-radius: 0; /* Let parent control radius */
 }
 
 .chat-header:hover {
@@ -341,6 +392,8 @@ defineExpose({
   border-bottom: 1px solid #eeeeee;
   display: flex;
   gap: 6px;
+  position: relative;
+  z-index: 1002; /* Ensure buttons are above overlay */
 }
 
 .session-select {
@@ -380,18 +433,28 @@ defineExpose({
   background: #0040c0;
 }
 
+.session-list-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1001;
+  background: transparent;
+}
+
 .session-list {
   position: absolute;
-  bottom: 160px;
+  top: 45px;
   left: 8px;
   right: 8px;
   background: white;
   border: 1px solid #d5d5d5;
   border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-  max-height: 180px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+  max-height: 200px;
   overflow-y: auto;
-  z-index: 1001;
+  z-index: 1002;
 }
 
 .session-option {
@@ -414,7 +477,7 @@ defineExpose({
   flex: 1;
   overflow-y: auto;
   padding: 12px;
-  min-height: 250px;
+  height: 350px;
   background: #fcfcfc;
 }
 

@@ -8,7 +8,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['change'])
+const emit = defineEmits(['change', 'save-request'])
 
 const iframeRef = ref(null)
 const isReady = ref(false)
@@ -47,9 +47,10 @@ const handleMessage = (event) => {
           currentXml.value = msg.xml
           emit('change', msg.xml)
         }
-        // If it's a 'save' event, draw.io might expect an acknowledgment or just close
+        // Handle explicit save button click
         if (msg.event === 'save') {
-          // You can handle explicit save button click here
+          // Notify parent that save was requested
+          emit('save-request', msg.xml)
         }
         break
       case 'export':
