@@ -14,6 +14,9 @@ const iframeRef = ref(null)
 const isReady = ref(false)
 const currentXml = ref(props.xml)
 const currentPageInfo = ref({ id: null, name: null })
+const pendingActivePageInfo = ref(null)
+const activePageSnapshot = ref(null)
+const isSyncingXml = ref(false)
 const uniquePageId = ref(`page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`)
 
 // draw.io embed URL parameters
@@ -24,12 +27,63 @@ const uniquePageId = ref(`page-${Date.now()}-${Math.random().toString(36).substr
 // configure=1: allow sending configuration before loading
 const DRAWIO_URL = 'https://embed.diagrams.net/?embed=1&ui=min&proto=json&spin=1&configure=1'
 
+const setCurrentPageInfo = (page) => {
+  if (!page) return
+  const id = page.id || page.pageId
+  const name = page.name || page.title
+  if (id || name) {
+    currentPageInfo.value = {
+      id: id || currentPageInfo.value.id,
+      name: name || currentPageInfo.value.name,
+    }
+  }
+}
+
+const rememberCurrentPageFromMessage = (msg) => {
+  setCurrentPageInfo(msg.currentPage)
+  setCurrentPageInfo(msg.page)
+  setCurrentPageInfo(msg.details?.currentPage)
+  setCurrentPageInfo(msg.details?.page)
+  if (msg.pageId || msg.pageName) {
+    setCurrentPageInfo({ id: msg.pageId, name: msg.pageName })
+  }
+}
+
+const getDiagramSnapshots = (xmlString) => {
+  if (!xmlString) return []
+  try {
+    const parser = new DOMParser()
+    const xmlDoc = parser.parseFromString(normalizeGraphXml(xmlString), 'text/xml')
+    return Array.from(xmlDoc.documentElement.children)
+      .filter(child => child.tagName === 'diagram')
+      .map(diagram => ({
+        id: diagram.getAttribute('id'),
+        name: diagram.getAttribute('name'),
+        xml: new XMLSerializer().serializeToString(diagram),
+      }))
+  } catch (e) {
+    return []
+  }
+}
+
+const updateCurrentPageByXmlChange = (previousXml, nextXml) => {
+  const previousDiagrams = getDiagramSnapshots(previousXml)
+  const nextDiagrams = getDiagramSnapshots(nextXml)
+  if (nextDiagrams.length === 0) return
+
+  const previousMap = new Map(previousDiagrams.map(diagram => [diagram.id || diagram.name, diagram.xml]))
+  const changedDiagram = nextDiagrams.find(diagram => previousMap.get(diagram.id || diagram.name) !== diagram.xml)
+  const targetDiagram = changedDiagram || nextDiagrams.find(diagram => diagram.id === currentPageInfo.value.id) || nextDiagrams[0]
+  setCurrentPageInfo(targetDiagram)
+}
+
 // Listen for messages from draw.io iframe
 const handleMessage = (event) => {
   if (!event.data || typeof event.data !== 'string') return
   
   try {
     const msg = JSON.parse(event.data)
+    rememberCurrentPageFromMessage(msg)
     
     switch (msg.event) {
       case 'configure':
@@ -46,7 +100,9 @@ const handleMessage = (event) => {
       case 'save':
         // XML updated in draw.io
         if (msg.xml) {
+          const previousXml = currentXml.value
           currentXml.value = msg.xml
+          updateCurrentPageByXmlChange(previousXml, msg.xml)
           
           // Try to extract page info from the XML itself if msg.details is missing
           if (msg.xml.includes('<mxfile')) {
@@ -70,10 +126,15 @@ const handleMessage = (event) => {
           emit('change', msg.xml)
         }
         // Handle explicit save button click
-        if (msg.event === 'save') {
+        if (msg.event === 'save' && !isSyncingXml.value) {
           // Notify parent that save was requested
           emit('save-request', msg.xml)
         }
+        break
+      case 'page':
+      case 'pages':
+      case 'pageChanged':
+        rememberCurrentPageFromMessage(msg)
         break
       case 'export':
         // Handle export result (e.g. PNG data)
@@ -253,11 +314,59 @@ const getXml = () => {
   return currentXml.value
 }
 
+const requestCurrentXml = () => {
+  return new Promise((resolve) => {
+    if (!isReady.value) return resolve(currentXml.value)
+
+    const previousSnapshot = currentXml.value
+    let resolved = false
+    const cleanup = () => {
+      window.removeEventListener('message', handleSyncMessage)
+    }
+    const done = (xml) => {
+      if (resolved) return
+      resolved = true
+      isSyncingXml.value = false
+      cleanup()
+      resolve(xml || currentXml.value)
+    }
+    const handleSyncMessage = (event) => {
+      if (!event.data || typeof event.data !== 'string') return
+      try {
+        const msg = JSON.parse(event.data)
+        if ((msg.event === 'autosave' || msg.event === 'save' || msg.event === 'change') && msg.xml) {
+          currentXml.value = msg.xml
+          updateCurrentPageByXmlChange(previousSnapshot, msg.xml)
+          rememberCurrentPageFromMessage(msg)
+          done(msg.xml)
+        }
+      } catch (e) {
+      }
+    }
+
+    window.addEventListener('message', handleSyncMessage)
+    isSyncingXml.value = true
+    postMessage({ action: 'status' })
+    postMessage({ action: 'save', exit: 0 })
+    setTimeout(() => done(currentXml.value), 500)
+  })
+}
+
+const getSyncedActivePageData = async () => {
+  await requestCurrentXml()
+  const activePage = getActivePageData(currentPageInfo.value, false)
+  activePageSnapshot.value = {
+    id: activePage.id,
+    name: activePage.name,
+  }
+  return activePage
+}
+
 /**
  * Extracts the XML of the currently active page from the full mxfile.
  * If the XML is not a multi-page mxfile, returns the whole XML.
  */
-const getActivePageData = () => {
+const getActivePageData = (preferredPageInfo = null, allowFallback = true) => {
   const fullXml = currentXml.value
   if (!fullXml) return { xml: '', id: null, name: null }
 
@@ -265,39 +374,51 @@ const getActivePageData = () => {
     const parser = new DOMParser()
     const xmlDoc = parser.parseFromString(fullXml, 'text/xml')
     const mxfile = xmlDoc.querySelector('mxfile')
+    const preferredPageId = preferredPageInfo?.id || currentPageInfo.value.id
+    const preferredPageName = preferredPageInfo?.name || currentPageInfo.value.name
     
     if (!mxfile) {
-      return { xml: fullXml, id: null, name: null }
+      return { xml: fullXml, id: preferredPageId || null, name: preferredPageName || null }
     }
 
-    // Try to find the active diagram. 
-    // In draw.io XML, the active diagram is usually the one without a hidden attribute 
-    // or we can use the one tracked by currentPageInfo
-    const diagrams = Array.from(xmlDoc.querySelectorAll('diagram'))
-    let activeDiagram = diagrams.find(d => d.getAttribute('id') === currentPageInfo.value.id)
+    const diagrams = Array.from(xmlDoc.documentElement.children).filter(child => child.tagName === 'diagram')
+    let activeDiagram = diagrams.find(d => d.getAttribute('id') === preferredPageId)
     
-    if (!activeDiagram && diagrams.length > 0) {
-      activeDiagram = diagrams[0] // Fallback to first page
+    if (!activeDiagram && preferredPageName) {
+      activeDiagram = diagrams.find(d => d.getAttribute('name') === preferredPageName)
+    }
+
+    if (!activeDiagram && allowFallback && diagrams.length > 0) {
+      activeDiagram = diagrams[0]
     }
 
     if (activeDiagram) {
       const model = activeDiagram.querySelector('mxGraphModel')
-      return {
-        xml: model ? new XMLSerializer().serializeToString(model) : '',
+      const pageInfo = {
         id: activeDiagram.getAttribute('id'),
         name: activeDiagram.getAttribute('name')
+      }
+      currentPageInfo.value = pageInfo
+      return {
+        xml: model ? new XMLSerializer().serializeToString(model) : '',
+        ...pageInfo,
       }
     }
   } catch (e) {
     console.error('Error extracting active page data:', e)
   }
 
-  return { xml: fullXml, id: null, name: null }
+  return { xml: fullXml, id: currentPageInfo.value.id, name: currentPageInfo.value.name }
 }
 
 /**
  * Merges a single page's mxGraphModel XML back into the full mxfile.
  */
+const setActivePageInfo = (pageInfo) => {
+  setCurrentPageInfo(pageInfo)
+  pendingActivePageInfo.value = pageInfo
+}
+
 const mergePageXml = (pageXml, pageId) => {
   let fullXml = currentXml.value
 
@@ -309,6 +430,12 @@ const mergePageXml = (pageXml, pageId) => {
     const diagrams = Array.from(xmlDoc.documentElement.children).filter(child => child.tagName === 'diagram')
     
     let targetDiagram = diagrams.find(d => d.getAttribute('id') === pageId)
+    if (!targetDiagram && pendingActivePageInfo.value?.id) {
+      targetDiagram = diagrams.find(d => d.getAttribute('id') === pendingActivePageInfo.value.id)
+    }
+    if (!targetDiagram && pendingActivePageInfo.value?.name) {
+      targetDiagram = diagrams.find(d => d.getAttribute('name') === pendingActivePageInfo.value.name)
+    }
     if (!targetDiagram && currentPageInfo.value.id) {
       targetDiagram = diagrams.find(d => d.getAttribute('id') === currentPageInfo.value.id)
     }
@@ -330,6 +457,7 @@ const mergePageXml = (pageXml, pageId) => {
     const updatedFullXml = serializer.serializeToString(xmlDoc)
     loadXml(updatedFullXml)
     currentXml.value = updatedFullXml
+    pendingActivePageInfo.value = null
     emit('change', updatedFullXml)
     return updatedFullXml
   } catch (e) {
@@ -382,7 +510,9 @@ const clearCanvas = () => {
 defineExpose({
   loadXml,
   getXml,
+  getSyncedActivePageData,
   getActivePageData,
+  setActivePageInfo,
   mergePageXml,
   exportAsPng,
   clearCanvas,

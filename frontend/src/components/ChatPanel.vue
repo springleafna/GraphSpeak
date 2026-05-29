@@ -14,6 +14,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['sessionChange', 'graphUpdate', 'getContext'])
+const currentActivePage = ref(null)
 
 const isCollapsed = ref(false)
 const isSessionListVisible = ref(false)
@@ -187,8 +188,15 @@ async function handleSend() {
   let activePageContext = null
   const contextResponse = {}
   emit('getContext', contextResponse)
+  if (contextResponse.promise) {
+    await contextResponse.promise
+  }
   if (contextResponse.activePage) {
     activePageContext = contextResponse.activePage
+    currentActivePage.value = {
+      id: activePageContext.id,
+      name: activePageContext.name,
+    }
   }
 
   const content = inputText.value.trim()
@@ -241,7 +249,7 @@ async function handleSend() {
   try {
     // Inject active page XML into content if it exists to give AI context
     const enrichedContent = activePageContext && activePageContext.xml
-      ? `${content}\n\n[当前页面内容]:\n${activePageContext.xml}`
+      ? `${content}\n\n[当前页面信息]:\n页面ID: ${activePageContext.id || ''}\n页面名称: ${activePageContext.name || ''}\n\n[当前页面内容]:\n${activePageContext.xml}`
       : content
 
     await messageApi.stream(sessionId, enrichedContent, async (data) => {
@@ -265,7 +273,10 @@ async function handleSend() {
       } else if (data.type === 'end') {
         const xml = extractXmlFromContent(aiContent)
         if (xml) {
-          await emit('graphUpdate', xml)
+          await emit('graphUpdate', {
+            xml,
+            page: currentActivePage.value,
+          })
         }
 
         loading.value = false

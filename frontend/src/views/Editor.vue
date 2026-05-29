@@ -82,8 +82,12 @@ function handleSessionSelect(session) {
   currentSession.value = session
 }
 
-async function handleGraphUpdate(xml) {
+async function handleGraphUpdate(payload) {
   if (!canvasRef.value || !currentProject.value) return
+
+  const xml = typeof payload === 'string' ? payload : payload?.xml
+  const targetPage = typeof payload === 'string' ? null : payload?.page
+  if (!xml) return
 
   const hasModel = xml.includes('<mxGraphModel')
   const hasGraphDataModel = xml.includes('<GraphDataModel')
@@ -94,7 +98,13 @@ async function handleGraphUpdate(xml) {
 
   try {
     if ((hasModel || hasGraphDataModel) && (isCurrentMultiPage || !hasFileWrapper)) {
-      const activePage = canvasRef.value.getActivePageData()
+      if (targetPage) {
+        canvasRef.value.setActivePageInfo(targetPage)
+      }
+      const activePage = canvasRef.value.getActivePageData(targetPage, Boolean(!targetPage))
+      if (!activePage.id && targetPage) {
+        throw new Error('未能定位当前编辑页面')
+      }
       let modelToMerge = xml
       if (hasFileWrapper) {
         const parser = new DOMParser()
@@ -257,7 +267,9 @@ function toggleSessionList() {
 }
 function handleChatContext(response) {
   if (canvasRef.value) {
-    response.activePage = canvasRef.value.getActivePageData()
+    response.promise = canvasRef.value.getSyncedActivePageData().then((activePage) => {
+      response.activePage = activePage
+    })
   }
 }
 </script>
