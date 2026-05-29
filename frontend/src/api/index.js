@@ -87,14 +87,14 @@ export const sessionApi = {
 export const messageApi = {
   list: (sessionId) => request(`/messages?sessionId=${sessionId}`),
 
-  stream: async (sessionId, content, onMessage) => {
+  stream: async (sessionId, content, modelContent, onMessage) => {
     try {
       const response = await fetch(`${BASE_URL}/messages/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ sessionId, content }),
+        body: JSON.stringify({ sessionId, content, modelContent }),
       })
 
       if (!response.ok) {

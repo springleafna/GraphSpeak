@@ -82,6 +82,16 @@ function handleSessionSelect(session) {
   currentSession.value = session
 }
 
+function extractModelXml(xml) {
+  if (!xml) return ''
+  if (!xml.includes('<mxfile')) return xml
+
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(xml, 'text/xml')
+  const model = doc.querySelector('mxGraphModel')
+  return model ? new XMLSerializer().serializeToString(model) : xml
+}
+
 async function handleGraphUpdate(payload) {
   if (!canvasRef.value || !currentProject.value) return
 
@@ -89,43 +99,24 @@ async function handleGraphUpdate(payload) {
   const targetPage = typeof payload === 'string' ? null : payload?.page
   if (!xml) return
 
-  const hasModel = xml.includes('<mxGraphModel')
-  const hasGraphDataModel = xml.includes('<GraphDataModel')
-  const hasFileWrapper = xml.includes('<mxfile')
-  const isCurrentMultiPage = currentProject.value?.xml?.includes('<mxfile')
-  
-  let finalXml = xml
-
   try {
-    if ((hasModel || hasGraphDataModel) && (isCurrentMultiPage || !hasFileWrapper)) {
-      if (targetPage) {
-        canvasRef.value.setActivePageInfo(targetPage)
-      }
-      const activePage = canvasRef.value.getActivePageData(targetPage, Boolean(!targetPage))
-      if (!activePage.id && targetPage) {
-        throw new Error('未能定位当前编辑页面')
-      }
-      let modelToMerge = xml
-      if (hasFileWrapper) {
-        const parser = new DOMParser()
-        const doc = parser.parseFromString(xml, 'text/xml')
-        const model = doc.querySelector('mxGraphModel')
-        if (model) {
-          modelToMerge = new XMLSerializer().serializeToString(model)
-        }
-      }
-      finalXml = canvasRef.value.mergePageXml(modelToMerge, activePage.id)
-    } else {
-      canvasRef.value.loadXml(xml)
-      await nextTick()
-      finalXml = canvasRef.value.getXml()
+    const activePage = canvasRef.value.getActivePageData(targetPage, false)
+    if (!activePage.id && activePage.isMultiPage !== false) {
+      throw new Error('未能可靠识别当前页面，本次 AI 更新已取消。请先在目标页面中点击或编辑后重试。')
     }
+
+    if (targetPage) {
+      canvasRef.value.setActivePageInfo(targetPage)
+    }
+
+    const modelToMerge = extractModelXml(xml)
+    const finalXml = canvasRef.value.mergePageXml(modelToMerge, activePage.id)
 
     currentProject.value.xml = finalXml
     await saveProjectXml(finalXml)
   } catch (error) {
     console.error('Graph update error:', error)
-    alert('图形更新或保存失败')
+    alert(error.message || '图形更新或保存失败')
   }
 }
 

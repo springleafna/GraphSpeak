@@ -197,6 +197,107 @@ function extractXmlFromContent(content) {
   return null
 }
 
+function formatAiDisplayContent(content) {
+  const xml = extractXmlFromContent(content)
+  if (!xml) return content
+
+  const textWithoutXml = content
+    .replace(/```(?:xml)?/gi, '')
+    .replace(/```/g, '')
+    .replace(xml, '')
+    .trim()
+
+  if (textWithoutXml) return content
+
+  return `已根据你的要求更新当前页面。\n\n\`\`\`xml\n${xml}\n\`\`\``
+}
+
+function escapeHtml(content) {
+  return String(content || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function renderInlineMarkdown(content) {
+  return content
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+}
+
+function renderMarkdown(content) {
+  const escaped = escapeHtml(content)
+  const codeBlocks = []
+  const withoutCodeBlocks = escaped.replace(/```(\w+)?\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const index = codeBlocks.length
+    codeBlocks.push(`<pre><code class="language-${lang || 'text'}">${code.trim()}</code></pre>`)
+    return `\n@@CODE_BLOCK_${index}@@\n`
+  })
+
+  const lines = withoutCodeBlocks.split('\n')
+  const result = []
+  let listType = null
+
+  const closeList = () => {
+    if (listType) {
+      result.push(`</${listType}>`)
+      listType = null
+    }
+  }
+
+  lines.forEach((line) => {
+    const codeBlockMatch = line.match(/^@@CODE_BLOCK_(\d+)@@$/)
+    if (codeBlockMatch) {
+      closeList()
+      result.push(codeBlocks[Number(codeBlockMatch[1])])
+      return
+    }
+
+    const headingMatch = line.match(/^(#{1,3})\s+(.+)$/)
+    if (headingMatch) {
+      closeList()
+      const level = headingMatch[1].length
+      result.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`)
+      return
+    }
+
+    const unorderedMatch = line.match(/^\s*[-*]\s+(.+)$/)
+    if (unorderedMatch) {
+      if (listType !== 'ul') {
+        closeList()
+        listType = 'ul'
+        result.push('<ul>')
+      }
+      result.push(`<li>${renderInlineMarkdown(unorderedMatch[1])}</li>`)
+      return
+    }
+
+    const orderedMatch = line.match(/^\s*\d+\.\s+(.+)$/)
+    if (orderedMatch) {
+      if (listType !== 'ol') {
+        closeList()
+        listType = 'ol'
+        result.push('<ol>')
+      }
+      result.push(`<li>${renderInlineMarkdown(orderedMatch[1])}</li>`)
+      return
+    }
+
+    closeList()
+    if (line.trim()) {
+      result.push(`<p>${renderInlineMarkdown(line)}</p>`)
+    } else {
+      result.push('<br>')
+    }
+  })
+
+  closeList()
+  return result.join('')
+}
+
 async function handleSend() {
   if (!inputText.value.trim()) return
   if (!props.projectId) {
@@ -268,19 +369,32 @@ async function handleSend() {
   }
 
   try {
-    // Inject active page XML into content if it exists to give AI context
-    const enrichedContent = activePageContext && activePageContext.xml
-      ? `${content}\n\n[当前页面信息]:\n页面ID: ${activePageContext.id || ''}\n页面名称: ${activePageContext.name || ''}\n\n[当前页面内容]:\n${activePageContext.xml}`
+    const contextRules = activePageContext && activePageContext.xml
+      ? [
+          '[系统上下文说明]:',
+          '以下页面信息仅用于定位和修改当前页面。你只能返回当前页面的完整 <mxGraphModel>，不要返回 <mxfile> 或 <diagram>，不要修改其他页面。',
+          '',
+          '[用户指令]:',
+          content,
+          '',
+          '[当前页面信息]:',
+          `页面ID: ${activePageContext.id || ''}`,
+          `页面名称: ${activePageContext.name || ''}`,
+          '',
+          '[当前页面内容]:',
+          activePageContext.xml,
+        ].join('\n')
       : content
 
-    await messageApi.stream(sessionId, enrichedContent, async (data) => {
+    await messageApi.stream(sessionId, content, contextRules, async (data) => {
       if (data.type === 'content') {
         aiContent += data.content
+        const displayContent = formatAiDisplayContent(aiContent)
         const index = messages.value.findIndex(msg => msg.key === aiMessage.key)
         if (index !== -1) {
           const updatedMessage = {
             ...messages.value[index],
-            content: aiContent,
+            content: displayContent,
             isThinking: false,
           }
           messages.value = [
@@ -411,7 +525,7 @@ defineExpose({
             <span v-if="msg.isThinking" class="thinking-text">
               思考中<span class="thinking-dots"><span>.</span><span>.</span><span>.</span></span>
             </span>
-            <span v-else>{{ msg.content }}</span>
+            <div v-else class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
           </div>
         </div>
         <div v-if="loading && !currentAiMessage" class="message ai typing">
@@ -457,7 +571,6 @@ defineExpose({
   display: flex;
   flex-direction: column;
   font-family: Helvetica, Arial, sans-serif;
-  user-select: none;
   overflow: hidden;
 }
 
@@ -481,6 +594,7 @@ defineExpose({
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
+  user-select: none;
 }
 
 .chat-header:hover {
@@ -638,6 +752,7 @@ defineExpose({
   overflow-y: auto;
   padding: 12px;
   background: #fcfcfc;
+  user-select: text;
 }
 
 .empty {
@@ -665,10 +780,11 @@ defineExpose({
   padding: 10px 14px;
   border-radius: 12px;
   word-wrap: break-word;
-  white-space: pre-wrap;
   font-size: 13px;
   line-height: 1.5;
   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  cursor: text;
+  user-select: text;
 }
 
 .message.user .message-content {
@@ -681,6 +797,60 @@ defineExpose({
   background: #ffffff;
   border: 1px solid #d5d5d5;
   color: #333;
+}
+
+.markdown-content :deep(p) {
+  margin: 0 0 8px;
+}
+
+.markdown-content :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.markdown-content :deep(ul),
+.markdown-content :deep(ol) {
+  margin: 0 0 8px 18px;
+  padding: 0;
+}
+
+.markdown-content :deep(li) {
+  margin: 2px 0;
+}
+
+.markdown-content :deep(pre) {
+  margin: 6px 0;
+  padding: 8px;
+  background: #f6f8fa;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.markdown-content :deep(code) {
+  padding: 1px 4px;
+  background: #f6f8fa;
+  border-radius: 4px;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 12px;
+}
+
+.markdown-content :deep(pre code) {
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+}
+
+.markdown-content :deep(h1),
+.markdown-content :deep(h2),
+.markdown-content :deep(h3) {
+  margin: 4px 0 8px;
+  font-size: 14px;
+}
+
+.markdown-content :deep(a) {
+  color: #0050ef;
+  text-decoration: underline;
 }
 
 .message.typing .message-content {

@@ -36,16 +36,16 @@ export class MessageService {
     });
   }
 
-  async *streamChat(sessionId: bigint, content: string): AsyncGenerator<string> {
+  async *streamChat(sessionId: bigint, content: string, modelContent?: string): AsyncGenerator<string> {
     const chatOpenAI = this.aiService.getChatOpenAI();
     const graphPrompt = this.aiService.getGraphPrompt();
-    const sessionPrompt = this.aiService.getSessionPrompt();
+    const promptContent = modelContent || content;
 
     await this.create(sessionId, 'user', content);
 
     const messages = [
       new SystemMessage(graphPrompt),
-      new HumanMessage(content),
+      new HumanMessage(promptContent),
     ];
 
     let fullResponse = '';
@@ -57,7 +57,35 @@ export class MessageService {
       }
     }
 
-    await this.create(sessionId, 'ai', fullResponse);
+    await this.create(sessionId, 'ai', this.formatAiMessageForStorage(fullResponse));
+  }
+
+  private extractXmlFromContent(content: string): string | null {
+    const normalizedContent = content
+      .replace(/```(?:xml)?/gi, '')
+      .replace(/```/g, '')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, '&');
+
+    const xmlMatch = normalizedContent.match(/<((?:mxGraphModel|GraphDataModel|mxfile)\b)[\s\S]*?<\/\1>/);
+    return xmlMatch ? xmlMatch[0] : null;
+  }
+
+  private formatAiMessageForStorage(content: string): string {
+    const xml = this.extractXmlFromContent(content);
+    if (!xml) return content;
+
+    const textWithoutXml = content
+      .replace(/```(?:xml)?/gi, '')
+      .replace(/```/g, '')
+      .replace(xml, '')
+      .trim();
+
+    if (textWithoutXml) return content;
+
+    return `已根据你的要求更新当前页面。\n\n\`\`\`xml\n${xml}\n\`\`\``;
   }
 
   async generateSessionName(sessionId: bigint, firstMessage: string): Promise<void> {

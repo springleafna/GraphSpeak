@@ -26,10 +26,10 @@ export class MessageController {
   @Post('stream')
   @HttpCode(200)
   async stream(
-    @Body() body: { sessionId: string; content: string },
+    @Body() body: { sessionId: string; content: string; modelContent?: string },
     @Res() res: Response,
   ) {
-    const { sessionId, content } = body;
+    const { sessionId, content, modelContent } = body;
     const id = BigInt(sessionId);
 
     res.setHeader('Content-Type', 'text/event-stream');
@@ -41,7 +41,7 @@ export class MessageController {
     const isFirstMessage = messageCount === 0;
 
     try {
-      const stream = this.messageService.streamChat(id, content);
+      const stream = this.messageService.streamChat(id, content, modelContent);
 
       let fullResponse = '';
       for await (const chunk of stream) {

@@ -28,7 +28,7 @@ const uniquePageId = ref(`page-${Date.now()}-${Math.random().toString(36).substr
 const DRAWIO_URL = 'https://embed.diagrams.net/?embed=1&ui=min&proto=json&spin=1&configure=1'
 
 const setCurrentPageInfo = (page) => {
-  if (!page) return
+  if (!page) return false
   const id = page.id || page.pageId
   const name = page.name || page.title
   if (id || name) {
@@ -36,17 +36,24 @@ const setCurrentPageInfo = (page) => {
       id: id || currentPageInfo.value.id,
       name: name || currentPageInfo.value.name,
     }
+    return true
   }
+  return false
+}
+
+const extractPageInfoFromMessage = (msg) => {
+  const candidates = [
+    msg.currentPage,
+    msg.page,
+    msg.details?.currentPage,
+    msg.details?.page,
+    msg.pageId || msg.pageName ? { id: msg.pageId, name: msg.pageName } : null,
+  ]
+  return candidates.find(page => page && (page.id || page.pageId || page.name || page.title)) || null
 }
 
 const rememberCurrentPageFromMessage = (msg) => {
-  setCurrentPageInfo(msg.currentPage)
-  setCurrentPageInfo(msg.page)
-  setCurrentPageInfo(msg.details?.currentPage)
-  setCurrentPageInfo(msg.details?.page)
-  if (msg.pageId || msg.pageName) {
-    setCurrentPageInfo({ id: msg.pageId, name: msg.pageName })
-  }
+  return setCurrentPageInfo(extractPageInfoFromMessage(msg))
 }
 
 const getDiagramSnapshots = (xmlString) => {
@@ -69,12 +76,23 @@ const getDiagramSnapshots = (xmlString) => {
 const updateCurrentPageByXmlChange = (previousXml, nextXml) => {
   const previousDiagrams = getDiagramSnapshots(previousXml)
   const nextDiagrams = getDiagramSnapshots(nextXml)
-  if (nextDiagrams.length === 0) return
+  if (nextDiagrams.length === 0) return null
 
   const previousMap = new Map(previousDiagrams.map(diagram => [diagram.id || diagram.name, diagram.xml]))
   const changedDiagram = nextDiagrams.find(diagram => previousMap.get(diagram.id || diagram.name) !== diagram.xml)
   const targetDiagram = changedDiagram || nextDiagrams.find(diagram => diagram.id === currentPageInfo.value.id) || nextDiagrams[0]
   setCurrentPageInfo(targetDiagram)
+  return targetDiagram
+}
+
+const isMultiPageXml = (xmlString) => {
+  try {
+    const parser = new DOMParser()
+    const xmlDoc = parser.parseFromString(normalizeGraphXml(xmlString), 'text/xml')
+    return Array.from(xmlDoc.documentElement.children).filter(child => child.tagName === 'diagram').length > 1
+  } catch (e) {
+    return false
+  }
 }
 
 // Listen for messages from draw.io iframe
@@ -316,10 +334,11 @@ const getXml = () => {
 
 const requestCurrentXml = () => {
   return new Promise((resolve) => {
-    if (!isReady.value) return resolve(currentXml.value)
+    if (!isReady.value) return resolve({ xml: currentXml.value, pageInfo: currentPageInfo.value, hasReliablePageInfo: Boolean(currentPageInfo.value.id || currentPageInfo.value.name) })
 
     const previousSnapshot = currentXml.value
     let resolved = false
+    let hasReliablePageInfo = false
     const cleanup = () => {
       window.removeEventListener('message', handleSyncMessage)
     }
@@ -328,7 +347,11 @@ const requestCurrentXml = () => {
       resolved = true
       isSyncingXml.value = false
       cleanup()
-      resolve(xml || currentXml.value)
+      resolve({
+        xml: xml || currentXml.value,
+        pageInfo: currentPageInfo.value,
+        hasReliablePageInfo: hasReliablePageInfo || Boolean(currentPageInfo.value.id || currentPageInfo.value.name),
+      })
     }
     const handleSyncMessage = (event) => {
       if (!event.data || typeof event.data !== 'string') return
@@ -336,8 +359,13 @@ const requestCurrentXml = () => {
         const msg = JSON.parse(event.data)
         if ((msg.event === 'autosave' || msg.event === 'save' || msg.event === 'change') && msg.xml) {
           currentXml.value = msg.xml
-          updateCurrentPageByXmlChange(previousSnapshot, msg.xml)
-          rememberCurrentPageFromMessage(msg)
+          const explicitPageInfo = rememberCurrentPageFromMessage(msg)
+          if (explicitPageInfo) {
+            hasReliablePageInfo = true
+          } else {
+            const changedPage = updateCurrentPageByXmlChange(previousSnapshot, msg.xml)
+            hasReliablePageInfo = Boolean(changedPage)
+          }
           done(msg.xml)
         }
       } catch (e) {
@@ -353,13 +381,19 @@ const requestCurrentXml = () => {
 }
 
 const getSyncedActivePageData = async () => {
-  await requestCurrentXml()
-  const activePage = getActivePageData(currentPageInfo.value, false)
+  const syncResult = await requestCurrentXml()
+  const activePage = getActivePageData(syncResult.pageInfo, false)
+  const hasMultiplePages = isMultiPageXml(syncResult.xml)
+  const hasReliablePageInfo = syncResult.hasReliablePageInfo && Boolean(activePage.id || activePage.name)
   activePageSnapshot.value = {
     id: activePage.id,
     name: activePage.name,
   }
-  return activePage
+  return {
+    ...activePage,
+    isReliable: !hasMultiplePages || hasReliablePageInfo,
+    isMultiPage: hasMultiplePages,
+  }
 }
 
 /**
@@ -378,10 +412,11 @@ const getActivePageData = (preferredPageInfo = null, allowFallback = true) => {
     const preferredPageName = preferredPageInfo?.name || currentPageInfo.value.name
     
     if (!mxfile) {
-      return { xml: fullXml, id: preferredPageId || null, name: preferredPageName || null }
+      return { xml: fullXml, id: preferredPageId || null, name: preferredPageName || null, isMultiPage: false }
     }
 
     const diagrams = Array.from(xmlDoc.documentElement.children).filter(child => child.tagName === 'diagram')
+    const isMultiPage = diagrams.length > 1
     let activeDiagram = diagrams.find(d => d.getAttribute('id') === preferredPageId)
     
     if (!activeDiagram && preferredPageName) {
@@ -402,13 +437,14 @@ const getActivePageData = (preferredPageInfo = null, allowFallback = true) => {
       return {
         xml: model ? new XMLSerializer().serializeToString(model) : '',
         ...pageInfo,
+        isMultiPage,
       }
     }
   } catch (e) {
     console.error('Error extracting active page data:', e)
   }
 
-  return { xml: fullXml, id: currentPageInfo.value.id, name: currentPageInfo.value.name }
+  return { xml: fullXml, id: currentPageInfo.value.id, name: currentPageInfo.value.name, isMultiPage: false }
 }
 
 /**
@@ -428,19 +464,19 @@ const mergePageXml = (pageXml, pageId) => {
     fullXml = normalizeGraphXml(fullXml)
     const xmlDoc = parser.parseFromString(fullXml, 'text/xml')
     const diagrams = Array.from(xmlDoc.documentElement.children).filter(child => child.tagName === 'diagram')
+    const isMultiPage = diagrams.length > 1
+    const targetPageId = pageId || pendingActivePageInfo.value?.id || currentPageInfo.value.id
+    const targetPageName = pendingActivePageInfo.value?.name || currentPageInfo.value.name
     
-    let targetDiagram = diagrams.find(d => d.getAttribute('id') === pageId)
-    if (!targetDiagram && pendingActivePageInfo.value?.id) {
-      targetDiagram = diagrams.find(d => d.getAttribute('id') === pendingActivePageInfo.value.id)
+    let targetDiagram = diagrams.find(d => d.getAttribute('id') === targetPageId)
+    if (!targetDiagram && targetPageName) {
+      targetDiagram = diagrams.find(d => d.getAttribute('name') === targetPageName)
     }
-    if (!targetDiagram && pendingActivePageInfo.value?.name) {
-      targetDiagram = diagrams.find(d => d.getAttribute('name') === pendingActivePageInfo.value.name)
-    }
-    if (!targetDiagram && currentPageInfo.value.id) {
-      targetDiagram = diagrams.find(d => d.getAttribute('id') === currentPageInfo.value.id)
-    }
-    if (!targetDiagram && diagrams.length > 0) {
+    if (!targetDiagram && !isMultiPage && diagrams.length === 1) {
       targetDiagram = diagrams[0]
+    }
+    if (!targetDiagram) {
+      throw new Error('未能定位当前编辑页面')
     }
 
     const normalizedIncomingXml = normalizeGraphXml(pageXml)
@@ -448,22 +484,26 @@ const mergePageXml = (pageXml, pageId) => {
     const incomingDiagrams = Array.from(incomingDoc.documentElement.children).filter(child => child.tagName === 'diagram')
     const incomingModel = incomingDiagrams[0]?.querySelector('mxGraphModel')
     
-    if (incomingDiagrams.length > 1) {
-      xmlDoc.documentElement.replaceChildren(...incomingDiagrams.map(diagram => xmlDoc.importNode(diagram, true)))
-    } else if (incomingModel && targetDiagram) {
+    if (incomingModel) {
       targetDiagram.replaceChildren(xmlDoc.importNode(incomingModel, true))
+    } else {
+      throw new Error('AI 未返回有效的 mxGraphModel')
     }
 
     const updatedFullXml = serializer.serializeToString(xmlDoc)
     loadXml(updatedFullXml)
     currentXml.value = updatedFullXml
+    currentPageInfo.value = {
+      id: targetDiagram.getAttribute('id'),
+      name: targetDiagram.getAttribute('name'),
+    }
     pendingActivePageInfo.value = null
     emit('change', updatedFullXml)
     return updatedFullXml
   } catch (e) {
     console.error('Error merging page XML:', e)
+    throw e
   }
-  return fullXml
 }
 
 // Watch for external XML changes (e.g. AI updates)
