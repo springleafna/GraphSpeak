@@ -161,6 +161,26 @@ async function handleSessionChange(sessionId) {
   }
 }
 
+async function handleSessionDelete(session, event) {
+  event.stopPropagation()
+  if (!confirm(`确定要删除会话 "${session.name}" 吗？`)) return
+
+  try {
+    await sessionApi.delete(session.id)
+    await loadSessions()
+    if (session.id === props.sessionId) {
+      isNewSessionMode.value = true
+      isStreaming.value = false
+      currentAiMessage.value = null
+      messages.value = []
+      emit('sessionChange', null)
+    }
+  } catch (error) {
+    console.error('Delete session error:', error)
+    alert('删除会话失败')
+  }
+}
+
 function extractXmlFromContent(content) {
   const normalizedContent = content
     .replace(/```(?:xml)?/gi, '')
@@ -212,6 +232,7 @@ async function handleSend() {
     key: `${messageKey}-ai`,
     role: 'ai',
     content: '',
+    isThinking: true,
   }
   let aiContent = ''
 
@@ -260,6 +281,7 @@ async function handleSend() {
           const updatedMessage = {
             ...messages.value[index],
             content: aiContent,
+            isThinking: false,
           }
           messages.value = [
             ...messages.value.slice(0, index),
@@ -291,7 +313,18 @@ async function handleSend() {
   } catch (error) {
     console.error('Send message error:', error)
     if (currentAiMessage.value) {
-      currentAiMessage.value.content = '\n\n❌ 发送失败: ' + error.message
+      const index = messages.value.findIndex(msg => msg.key === currentAiMessage.value.key)
+      if (index !== -1) {
+        messages.value = [
+          ...messages.value.slice(0, index),
+          {
+            ...messages.value[index],
+            content: '\n\n❌ 发送失败: ' + error.message,
+            isThinking: false,
+          },
+          ...messages.value.slice(index + 1),
+        ]
+      }
     }
     loading.value = false
     isStreaming.value = false
@@ -354,7 +387,8 @@ defineExpose({
           :class="{ active: session.id === sessionId }"
           @click="handleSessionChange(session.id)"
         >
-          {{ session.name }}
+          <span class="session-option-name">{{ session.name }}</span>
+          <button class="session-delete-btn" title="删除" @click="handleSessionDelete(session, $event)">×</button>
         </div>
       </div>
 
@@ -373,7 +407,12 @@ defineExpose({
           class="message"
           :class="msg.role"
         >
-          <div class="message-content">{{ msg.content }}</div>
+          <div class="message-content">
+            <span v-if="msg.isThinking" class="thinking-text">
+              思考中<span class="thinking-dots"><span>.</span><span>.</span><span>.</span></span>
+            </span>
+            <span v-else>{{ msg.content }}</span>
+          </div>
         </div>
         <div v-if="loading && !currentAiMessage" class="message ai typing">
           <div class="message-content">思考中...</div>
@@ -543,6 +582,9 @@ defineExpose({
   cursor: pointer;
   border-bottom: 1px solid #eeeeee;
   font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .session-option:hover {
@@ -552,6 +594,32 @@ defineExpose({
 .session-option.active {
   background: #e3f2fd;
   font-weight: bold;
+}
+
+.session-option-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-delete-btn {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #bbb;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 18px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.session-delete-btn:hover {
+  color: #f44336;
+  background: #ffecec;
 }
 
 .empty-session {
@@ -618,6 +686,33 @@ defineExpose({
 .message.typing .message-content {
   color: #999;
   font-style: italic;
+}
+
+.thinking-text {
+  color: #777;
+  font-style: italic;
+}
+
+.thinking-dots span {
+  animation: thinking-dot 1.2s infinite ease-in-out;
+  opacity: 0.2;
+}
+
+.thinking-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.thinking-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes thinking-dot {
+  0%, 80%, 100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
 }
 
 .input-area {
