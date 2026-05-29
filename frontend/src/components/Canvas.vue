@@ -49,7 +49,7 @@ const handleMessage = (event) => {
           currentXml.value = msg.xml
           
           // Try to extract page info from the XML itself if msg.details is missing
-          if (msg.xml.includes('<mxfile>')) {
+          if (msg.xml.includes('<mxfile')) {
             try {
               const parser = new DOMParser()
               const xmlDoc = parser.parseFromString(msg.xml, 'text/xml')
@@ -104,7 +104,15 @@ const sendConfig = () => {
 }
 
 const createEmptyMxFile = () => {
-  return `<mxfile><diagram id="${uniquePageId.value}" name="Page-1"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>`
+  return `<mxfile host="GraphSpeak"><diagram id="${uniquePageId.value}" name="Page-1"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>`
+}
+
+const serializeNodeChildren = (node) => {
+  return Array.from(node.childNodes).map(child => new XMLSerializer().serializeToString(child)).join('')
+}
+
+const createDiagramXml = (modelXml, id, name) => {
+  return `<diagram id="${id || `page-${Math.random().toString(36).substr(2, 5)}`}" name="${name || 'Page'}">${modelXml}</diagram>`
 }
 
 const normalizeGraphXml = (xmlString) => {
@@ -123,13 +131,42 @@ const normalizeGraphXml = (xmlString) => {
     throw new Error('Invalid XML')
   }
 
-  if (!xmlDoc.querySelector('mxfile')) {
+  const rootElement = xmlDoc.documentElement
+  const serializer = new XMLSerializer()
+
+  if (rootElement?.tagName === 'mxfile') {
+    const diagrams = Array.from(rootElement.children).filter(child => child.tagName === 'diagram')
+    if (diagrams.length === 0) {
+      processedXml = createEmptyMxFile()
+    } else {
+      const normalizedDiagrams = diagrams.map((diagram, index) => {
+        const nestedMxfile = diagram.querySelector(':scope > mxfile')
+        const model = diagram.querySelector(':scope > mxGraphModel') || nestedMxfile?.querySelector('mxGraphModel')
+        const diagramId = diagram.getAttribute('id') || `page-${index + 1}`
+        const diagramName = diagram.getAttribute('name') || `Page-${index + 1}`
+        if (model) {
+          return createDiagramXml(serializer.serializeToString(model), diagramId, diagramName)
+        }
+        return createDiagramXml(serializeNodeChildren(diagram), diagramId, diagramName)
+      })
+      processedXml = `<mxfile host="${rootElement.getAttribute('host') || 'GraphSpeak'}">${normalizedDiagrams.join('')}</mxfile>`
+    }
+    xmlDoc = parser.parseFromString(processedXml, 'text/xml')
+  } else {
     const model = xmlDoc.querySelector('mxGraphModel')
     processedXml = model
-      ? `<mxfile><diagram id="${uniquePageId.value}" name="Page-1">${new XMLSerializer().serializeToString(model)}</diagram></mxfile>`
+      ? `<mxfile host="GraphSpeak">${createDiagramXml(serializer.serializeToString(model), uniquePageId.value, 'Page-1')}</mxfile>`
       : createEmptyMxFile()
     xmlDoc = parser.parseFromString(processedXml, 'text/xml')
   }
+
+  xmlDoc.querySelectorAll('mxfile mxfile').forEach(nestedMxfile => {
+    const parentDiagram = nestedMxfile.parentElement
+    const nestedModel = nestedMxfile.querySelector('mxGraphModel')
+    if (parentDiagram?.tagName === 'diagram' && nestedModel) {
+      parentDiagram.replaceChildren(xmlDoc.importNode(nestedModel, true))
+    }
+  })
 
   xmlDoc.querySelectorAll('[id]').forEach(el => {
     if (!['mxCell', 'diagram'].includes(el.tagName)) {
@@ -263,53 +300,38 @@ const getActivePageData = () => {
  */
 const mergePageXml = (pageXml, pageId) => {
   let fullXml = currentXml.value
-  
-  // If the incoming XML is already a full mxfile, we should try to merge its diagrams
-  // instead of just replacing the whole thing, but for now let's assume pageXml 
-  // is just the mxGraphModel part.
-  const isIncomingFull = pageXml.includes('<mxfile>')
-  const isCurrentFull = fullXml && fullXml.includes('<mxfile>')
 
   try {
     const parser = new DOMParser()
-    
-    // 1. Ensure we have a working fullXml base
-    if (!isCurrentFull) {
-      // If current is not full, wrap it now to create a multi-page structure
-      const baseXml = fullXml && fullXml.trim() !== '' ? fullXml : '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>'
-      fullXml = `<mxfile><diagram id="page-1" name="Page-1">${baseXml}</diagram></mxfile>`
-    }
-
+    const serializer = new XMLSerializer()
+    fullXml = normalizeGraphXml(fullXml)
     const xmlDoc = parser.parseFromString(fullXml, 'text/xml')
-    const diagrams = Array.from(xmlDoc.querySelectorAll('diagram'))
+    const diagrams = Array.from(xmlDoc.documentElement.children).filter(child => child.tagName === 'diagram')
     
-    // 2. Identify target diagram
     let targetDiagram = diagrams.find(d => d.getAttribute('id') === pageId)
     if (!targetDiagram && currentPageInfo.value.id) {
       targetDiagram = diagrams.find(d => d.getAttribute('id') === currentPageInfo.value.id)
     }
     if (!targetDiagram && diagrams.length > 0) {
-      targetDiagram = diagrams[0] // Default to first page
+      targetDiagram = diagrams[0]
     }
 
-    // 3. Extract the model to insert
-    const incomingDoc = parser.parseFromString(pageXml, 'text/xml')
-    const incomingModel = incomingDoc.querySelector('mxGraphModel')
+    const normalizedIncomingXml = normalizeGraphXml(pageXml)
+    const incomingDoc = parser.parseFromString(normalizedIncomingXml, 'text/xml')
+    const incomingDiagrams = Array.from(incomingDoc.documentElement.children).filter(child => child.tagName === 'diagram')
+    const incomingModel = incomingDiagrams[0]?.querySelector('mxGraphModel')
     
-    if (incomingModel && targetDiagram) {
-      const oldModel = targetDiagram.querySelector('mxGraphModel')
-      if (oldModel) {
-        targetDiagram.replaceChild(xmlDoc.importNode(incomingModel, true), oldModel)
-      } else {
-        targetDiagram.appendChild(xmlDoc.importNode(incomingModel, true))
-      }
-      
-      const updatedFullXml = new XMLSerializer().serializeToString(xmlDoc)
-      loadXml(updatedFullXml)
-      currentXml.value = updatedFullXml
-      emit('change', updatedFullXml)
-      return updatedFullXml
+    if (incomingDiagrams.length > 1) {
+      xmlDoc.documentElement.replaceChildren(...incomingDiagrams.map(diagram => xmlDoc.importNode(diagram, true)))
+    } else if (incomingModel && targetDiagram) {
+      targetDiagram.replaceChildren(xmlDoc.importNode(incomingModel, true))
     }
+
+    const updatedFullXml = serializer.serializeToString(xmlDoc)
+    loadXml(updatedFullXml)
+    currentXml.value = updatedFullXml
+    emit('change', updatedFullXml)
+    return updatedFullXml
   } catch (e) {
     console.error('Error merging page XML:', e)
   }
