@@ -78,28 +78,23 @@ async function handleProjectSelect(project) {
   currentProject.value = project
 }
 
-async function handleSessionSelect(session) {
+function handleSessionSelect(session) {
   currentSession.value = session
-  if (chatPanelRef.value) {
-    chatPanelRef.value.refreshMessages()
-  }
 }
 
 async function handleGraphUpdate(xml) {
-  if (canvasRef.value) {
-    // Determine if we should treat this as a single page update or a full project update
-    // AI usually returns <mxGraphModel>, but sometimes it might return a full <mxfile> with one diagram
-    const hasModel = xml.includes('<mxGraphModel')
-    const hasFileWrapper = xml.includes('<mxfile>')
-    const isCurrentMultiPage = currentProject.value?.xml?.includes('<mxfile>')
-    
-    let finalXml = xml
+  if (!canvasRef.value || !currentProject.value) return
 
-    if (hasModel && (isCurrentMultiPage || !hasFileWrapper)) {
-      // If the update contains a model, and we either already have multiple pages 
-      // or the update doesn't have its own file wrapper, we treat it as a page update.
+  const hasModel = xml.includes('<mxGraphModel')
+  const hasGraphDataModel = xml.includes('<GraphDataModel')
+  const hasFileWrapper = xml.includes('<mxfile')
+  const isCurrentMultiPage = currentProject.value?.xml?.includes('<mxfile')
+  
+  let finalXml = xml
+
+  try {
+    if ((hasModel || hasGraphDataModel) && (isCurrentMultiPage || !hasFileWrapper)) {
       const activePage = canvasRef.value.getActivePageData()
-      // Extract the mxGraphModel part if AI accidentally wrapped it in something else
       let modelToMerge = xml
       if (hasFileWrapper) {
         const parser = new DOMParser()
@@ -111,15 +106,16 @@ async function handleGraphUpdate(xml) {
       }
       finalXml = canvasRef.value.mergePageXml(modelToMerge, activePage.id)
     } else {
-      // Otherwise, load it as a full project
       canvasRef.value.loadXml(xml)
+      await nextTick()
+      finalXml = canvasRef.value.getXml()
     }
 
-    // 同步更新本地项目数据，确保 UI 状态一致
-    if (currentProject.value) {
-      currentProject.value.xml = finalXml
-    }
-    scheduleAutoSave()
+    currentProject.value.xml = finalXml
+    await saveProjectXml(finalXml)
+  } catch (error) {
+    console.error('Graph update error:', error)
+    alert('图形更新或保存失败')
   }
 }
 
@@ -136,17 +132,34 @@ function scheduleAutoSave() {
   }, 2000)
 }
 
-async function autoSave() {
-  if (!currentProject.value || !canvasRef.value) return
+async function saveProjectXml(xml) {
+  if (!currentProject.value) return
+
+  if (autoSaveTimer.value) {
+    clearTimeout(autoSaveTimer.value)
+    autoSaveTimer.value = null
+  }
 
   isSaving.value = true
   try {
-    const xml = canvasRef.value.getXml()
     await projectApi.update(currentProject.value.id, { xml })
   } catch (error) {
-    console.error('Auto save error:', error)
+    console.error('Save project XML error:', error)
+    throw error
   } finally {
     isSaving.value = false
+  }
+}
+
+async function autoSave() {
+  if (!currentProject.value || !canvasRef.value) return
+
+  try {
+    const xml = canvasRef.value.getXml()
+    currentProject.value.xml = xml
+    await saveProjectXml(xml)
+  } catch (error) {
+    console.error('Auto save error:', error)
   }
 }
 
@@ -156,7 +169,8 @@ async function handleSave() {
   isSaving.value = true
   try {
     const xml = canvasRef.value.getXml()
-    await projectApi.update(currentProject.value.id, { xml })
+    currentProject.value.xml = xml
+    await saveProjectXml(xml)
     alert('保存成功')
   } catch (error) {
     console.error('Save error:', error)

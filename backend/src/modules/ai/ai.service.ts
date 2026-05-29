@@ -40,7 +40,7 @@ export class AIService implements OnModuleInit {
           apiKey: deepSeekKey,
           baseURL: deepSeekBaseUrl,
         },
-        model: 'deepseek-chat',
+        model: 'deepseek-v4-flash',
         temperature: 0.7,
         streaming: true,
       });

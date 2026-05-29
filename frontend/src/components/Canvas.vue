@@ -14,6 +14,7 @@ const iframeRef = ref(null)
 const isReady = ref(false)
 const currentXml = ref(props.xml)
 const currentPageInfo = ref({ id: null, name: null })
+const uniquePageId = ref(`page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`)
 
 // draw.io embed URL parameters
 // embed=1: enable embed mode
@@ -102,91 +103,104 @@ const sendConfig = () => {
   })
 }
 
-const loadXml = (xmlString) => {
-  if (!isReady.value) return
-  
-  let finalXml = xmlString
-  
-  // 1. Basic empty structure if nothing is provided
-  if (!finalXml || finalXml.trim() === '') {
-    finalXml = '<mxfile><diagram id="page-1" name="Page-1"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>'
-  }
-  
-  // 2. Comprehensive conversion from maxGraph to mxGraph (draw.io)
-  let processedXml = finalXml
+const createEmptyMxFile = () => {
+  return `<mxfile><diagram id="${uniquePageId.value}" name="Page-1"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>`
+}
+
+const normalizeGraphXml = (xmlString) => {
+  let processedXml = xmlString && xmlString.trim() !== '' ? xmlString : createEmptyMxFile()
+
   processedXml = processedXml.replace(/<GraphDataModel/g, '<mxGraphModel').replace(/<\/GraphDataModel>/g, '</mxGraphModel>')
   processedXml = processedXml.replace(/<Cell\b/g, '<mxCell').replace(/<\/Cell>/g, '</mxCell>')
   processedXml = processedXml.replace(/<Geometry\b/g, '<mxGeometry').replace(/<\/Geometry>/g, '</mxGeometry>')
   processedXml = processedXml.replace(/<Point\b/g, '<mxPoint').replace(/<\/Point>/g, '</mxPoint>')
   processedXml = processedXml.replace(/\b_x=/g, 'x=').replace(/\b_y=/g, 'y=')
 
-  // 3. Advanced Sanitization using DOMParser
-  try {
-    const parser = new DOMParser()
-    const xmlDoc = parser.parseFromString(processedXml, 'text/xml')
-    
-    // Check if it's already a full mxfile or just mxGraphModel
-    const isFullFile = xmlDoc.querySelector('mxfile')
-    
-    if (!isFullFile) {
-      // If it's just a bare model, we might want to wrap it or fix it up
-      // but for now, we'll let draw.io handle the wrapping if it's valid
+  const parser = new DOMParser()
+  let xmlDoc = parser.parseFromString(processedXml, 'text/xml')
+
+  if (xmlDoc.querySelector('parsererror')) {
+    throw new Error('Invalid XML')
+  }
+
+  if (!xmlDoc.querySelector('mxfile')) {
+    const model = xmlDoc.querySelector('mxGraphModel')
+    processedXml = model
+      ? `<mxfile><diagram id="${uniquePageId.value}" name="Page-1">${new XMLSerializer().serializeToString(model)}</diagram></mxfile>`
+      : createEmptyMxFile()
+    xmlDoc = parser.parseFromString(processedXml, 'text/xml')
+  }
+
+  xmlDoc.querySelectorAll('[id]').forEach(el => {
+    if (!['mxCell', 'diagram'].includes(el.tagName)) {
+      el.removeAttribute('id')
+    }
+  })
+
+  xmlDoc.querySelectorAll('mxGeometry').forEach(geometry => {
+    if (!geometry.getAttribute('as')) {
+      geometry.setAttribute('as', 'geometry')
+    }
+  })
+
+  xmlDoc.querySelectorAll('mxCell').forEach(cell => {
+    if (!cell.getAttribute('id')) {
+      cell.setAttribute('id', 'cell_' + Math.random().toString(36).substr(2, 5))
+    }
+    Array.from(cell.children).forEach(child => {
+      if (child.tagName === 'mxCell') {
+        cell.removeChild(child)
+      }
+    })
+  })
+
+  const validIds = new Set(['0', '1'])
+  xmlDoc.querySelectorAll('mxCell[id]').forEach(cell => validIds.add(cell.getAttribute('id')))
+
+  xmlDoc.querySelectorAll('mxCell').forEach(cell => {
+    ['parent', 'source', 'target'].forEach(attr => {
+      const val = cell.getAttribute(attr)
+      if (val && !validIds.has(val)) {
+        cell.removeAttribute(attr)
+        if (attr === 'parent') {
+          cell.setAttribute('parent', '1')
+        }
+      }
+    })
+  })
+
+  xmlDoc.querySelectorAll('mxGraphModel').forEach(model => {
+    let root = model.querySelector('root')
+    if (!root) {
+      root = xmlDoc.createElement('root')
+      model.appendChild(root)
     }
 
-    // Fix empty IDs first
-    const allCells = xmlDoc.querySelectorAll('mxCell, Cell')
-    allCells.forEach(cell => {
-      if (!cell.getAttribute('id')) {
-        cell.setAttribute('id', 'cell_' + Math.random().toString(36).substr(2, 5))
-      }
-      const innerMxCell = cell.querySelector('mxCell')
-      if (innerMxCell) {
-        cell.removeChild(innerMxCell)
-      }
-    })
+    if (!root.querySelector('mxCell[id="0"]')) {
+      const cell0 = xmlDoc.createElement('mxCell')
+      cell0.setAttribute('id', '0')
+      root.insertBefore(cell0, root.firstChild)
+    }
+    if (!root.querySelector('mxCell[id="1"]')) {
+      const cell1 = xmlDoc.createElement('mxCell')
+      cell1.setAttribute('id', '1')
+      cell1.setAttribute('parent', '0')
+      const cell0 = root.querySelector('mxCell[id="0"]')
+      cell0.after(cell1)
+    }
+  })
 
-    // Collect all valid IDs within the whole document
-    const validIds = new Set()
-    xmlDoc.querySelectorAll('[id]').forEach(el => validIds.add(el.getAttribute('id')))
-    validIds.add('0')
-    validIds.add('1')
+  return new XMLSerializer().serializeToString(xmlDoc)
+}
 
-    // Fix dangling references in all mxGraphModels (could be multiple in a mxfile)
-    xmlDoc.querySelectorAll('mxCell').forEach(cell => {
-      ['parent', 'source', 'target'].forEach(attr => {
-        const val = cell.getAttribute(attr)
-        if (val && !validIds.has(val)) {
-          cell.removeAttribute(attr)
-          if (attr === 'parent') {
-            cell.setAttribute('parent', '1')
-          }
-        }
-      })
-    })
+const loadXml = (xmlString) => {
+  if (!isReady.value) return
+  
+  let processedXml = createEmptyMxFile()
 
-    // Ensure structure for each mxGraphModel found
-    xmlDoc.querySelectorAll('mxGraphModel').forEach(model => {
-      let root = model.querySelector('root')
-      if (!root) {
-        root = xmlDoc.createElement('root')
-        model.appendChild(root)
-      }
-
-      if (!root.querySelector('mxCell[id="0"]')) {
-        const cell0 = xmlDoc.createElement('mxCell')
-        cell0.setAttribute('id', '0')
-        root.insertBefore(cell0, root.firstChild)
-      }
-      if (!root.querySelector('mxCell[id="1"]')) {
-        const cell1 = xmlDoc.createElement('mxCell')
-        cell1.setAttribute('id', '1')
-        cell1.setAttribute('parent', '0')
-        const cell0 = root.querySelector('mxCell[id="0"]')
-        cell0.after(cell1)
-      }
-    })
-
-    processedXml = new XMLSerializer().serializeToString(xmlDoc)
+  try {
+    processedXml = normalizeGraphXml(xmlString)
+    currentXml.value = processedXml
   } catch (e) {
     console.error('XML Sanitization error:', e)
   }
@@ -306,7 +320,6 @@ const mergePageXml = (pageXml, pageId) => {
 watch(() => props.xml, (newXml) => {
   if (newXml !== currentXml.value) {
     loadXml(newXml)
-    currentXml.value = newXml
   }
 })
 

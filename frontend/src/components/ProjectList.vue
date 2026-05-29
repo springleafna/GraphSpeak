@@ -208,8 +208,8 @@ defineExpose({
   width: calc(100% - 20px);
   margin: 10px;
   padding: 8px 12px;
-  background: #0050ef;
-  color: white;
+  background: #c2e7ff;
+  color: #3f3f3f;
   border: none;
   border-radius: 8px;
   cursor: pointer;
@@ -218,7 +218,7 @@ defineExpose({
 }
 
 .create-btn:hover:not(:disabled) {
-  background: #0040c0;
+  background: #abcfe7;
 }
 
 .create-btn:disabled {

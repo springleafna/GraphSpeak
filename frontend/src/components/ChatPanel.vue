@@ -25,6 +25,8 @@ const currentAiMessage = ref(null)
 const messageContainerRef = ref(null)
 const isNewSessionMode = ref(false)
 const isStreaming = ref(false)
+const streamingSessionId = ref(null)
+const streamMessageKey = ref(0)
 
 const PANEL_WIDTH = 380
 const PANEL_HEIGHT = 520
@@ -81,11 +83,11 @@ function toggleCollapse() {
 watch(() => props.sessionId, async (newId) => {
   if (newId) {
     isNewSessionMode.value = false
-    if (!isStreaming.value) {
-      await loadMessages()
+    if (!isStreaming.value || streamingSessionId.value !== newId) {
+      await loadMessages(newId)
     }
     await loadSessions()
-  } else {
+  } else if (!isStreaming.value) {
     messages.value = []
   }
 }, { immediate: true })
@@ -96,19 +98,24 @@ watch(() => props.projectId, async () => {
   }
 }, { immediate: true })
 
-async function loadMessages() {
-  if (!props.sessionId) {
+async function loadMessages(targetSessionId = props.sessionId) {
+  if (!targetSessionId) {
     messages.value = []
     return
   }
   loading.value = true
   try {
-    messages.value = await messageApi.list(props.sessionId)
-    await scrollToBottom()
+    const loadedMessages = await messageApi.list(targetSessionId)
+    if (!isStreaming.value && targetSessionId === props.sessionId) {
+      messages.value = loadedMessages
+      await scrollToBottom()
+    }
   } catch (error) {
     console.error('Load messages error:', error)
   } finally {
-    loading.value = false
+    if (!isStreaming.value) {
+      loading.value = false
+    }
   }
 }
 
@@ -154,8 +161,15 @@ async function handleSessionChange(sessionId) {
 }
 
 function extractXmlFromContent(content) {
-  // 同时支持 mxGraphModel 和 GraphDataModel 标签
-  const xmlMatch = content.match(/<(mxGraphModel|GraphDataModel)[\s\S]*?<\/\1>/)
+  const normalizedContent = content
+    .replace(/```(?:xml)?/gi, '')
+    .replace(/```/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+
+  const xmlMatch = normalizedContent.match(/<((?:mxGraphModel|GraphDataModel|mxfile)\b)[\s\S]*?<\/\1>/)
   if (xmlMatch) {
     return xmlMatch[0]
   }
@@ -177,63 +191,90 @@ async function handleSend() {
     activePageContext = contextResponse.activePage
   }
 
+  const content = inputText.value.trim()
+  inputText.value = ''
+
+  const messageKey = ++streamMessageKey.value
+  const userMessage = {
+    key: `${messageKey}-user`,
+    role: 'user',
+    content,
+  }
+  const aiMessage = {
+    key: `${messageKey}-ai`,
+    role: 'ai',
+    content: '',
+  }
+  let aiContent = ''
+
+  messages.value = [...messages.value, userMessage, aiMessage]
+  currentAiMessage.value = aiMessage
+  loading.value = true
+  isStreaming.value = true
+
+  await scrollToBottom()
+
   let sessionId = props.sessionId
   const isNewSession = isNewSessionMode.value || !sessionId
+  streamingSessionId.value = sessionId
 
   if (isNewSession) {
     try {
       const session = await sessionApi.create({ projectId: props.projectId })
-      emit('sessionChange', session)
       sessionId = session.id
+      streamingSessionId.value = session.id
       isNewSessionMode.value = false
       await loadSessions()
+      emit('sessionChange', session)
     } catch (error) {
       console.error('Create session error:', error)
       alert('创建会话失败')
+      messages.value = messages.value.filter(msg => msg.key !== userMessage.key && msg.key !== aiMessage.key)
+      currentAiMessage.value = null
+      loading.value = false
+      isStreaming.value = false
+      streamingSessionId.value = null
       return
     }
   }
 
-  const content = inputText.value.trim()
-  inputText.value = ''
-
-  messages.value.push({
-    role: 'user',
-    content,
-  })
-
-  await scrollToBottom()
-
-  currentAiMessage.value = {
-    role: 'ai',
-    content: '',
-  }
-  messages.value.push(currentAiMessage.value)
-
-  loading.value = true
-  isStreaming.value = true
-
   try {
     // Inject active page XML into content if it exists to give AI context
-    const enrichedContent = activePageContext && activePageContext.xml 
+    const enrichedContent = activePageContext && activePageContext.xml
       ? `${content}\n\n[当前页面内容]:\n${activePageContext.xml}`
       : content
 
-    await messageApi.stream(sessionId, enrichedContent, (data) => {
+    await messageApi.stream(sessionId, enrichedContent, async (data) => {
       if (data.type === 'content') {
-        currentAiMessage.value.content += data.content
+        aiContent += data.content
+        const index = messages.value.findIndex(msg => msg.key === aiMessage.key)
+        if (index !== -1) {
+          const updatedMessage = {
+            ...messages.value[index],
+            content: aiContent,
+          }
+          messages.value = [
+            ...messages.value.slice(0, index),
+            updatedMessage,
+            ...messages.value.slice(index + 1),
+          ]
+          currentAiMessage.value = updatedMessage
+        }
 
-        scrollToBottom()
+        await scrollToBottom()
       } else if (data.type === 'end') {
-        const xml = extractXmlFromContent(currentAiMessage.value.content)
+        const xml = extractXmlFromContent(aiContent)
         if (xml) {
-          emit('graphUpdate', xml)
+          await emit('graphUpdate', xml)
         }
 
         loading.value = false
         isStreaming.value = false
+        streamingSessionId.value = null
         currentAiMessage.value = null
-        loadMessages().catch(console.error)
+        loadMessages(sessionId).catch(console.error)
+      } else if (data.type === 'error') {
+        throw new Error(data.message || '服务器错误')
       }
     })
   } catch (error) {
@@ -243,6 +284,7 @@ async function handleSend() {
     }
     loading.value = false
     isStreaming.value = false
+    streamingSessionId.value = null
     currentAiMessage.value = null
   }
 }
@@ -291,6 +333,9 @@ defineExpose({
       <div v-if="isSessionListVisible" class="session-list-overlay" @click="isSessionListVisible = false"></div>
       
       <div class="session-list" v-if="isSessionListVisible">
+        <div v-if="sessions.length === 0" class="session-option empty-session">
+          暂无会话
+        </div>
         <div
           v-for="session in sessions"
           :key="session.id"
@@ -303,7 +348,7 @@ defineExpose({
       </div>
 
       <div class="messages" ref="messageContainerRef">
-        <div v-if="isNewSessionMode || !sessionId" class="empty">
+        <div v-if="(isNewSessionMode || !sessionId) && messages.length === 0 && !loading" class="empty">
           <p>发送消息将创建新会话</p>
           <p>尝试说："画一个用户注册流程图"</p>
         </div>
@@ -313,7 +358,7 @@ defineExpose({
         </div>
         <div
           v-for="(msg, index) in messages"
-          :key="index"
+          :key="msg.id || msg.key || index"
           class="message"
           :class="msg.role"
         >
@@ -445,8 +490,8 @@ defineExpose({
 
 .new-session-btn {
   padding: 5px 12px;
-  background: #0050ef;
-  color: white;
+  background: #c2e7ff;
+  color: #3f3f3f;
   border: none;
   border-radius: 8px;
   cursor: pointer;
@@ -455,7 +500,7 @@ defineExpose({
 }
 
 .new-session-btn:hover {
-  background: #0040c0;
+  background: #abcfe7;
 }
 
 .session-list-overlay {
@@ -496,6 +541,16 @@ defineExpose({
 .session-option.active {
   background: #e3f2fd;
   font-weight: bold;
+}
+
+.empty-session {
+  cursor: default;
+  color: #999;
+  text-align: center;
+}
+
+.empty-session:hover {
+  background: #ffffff;
 }
 
 .messages {
