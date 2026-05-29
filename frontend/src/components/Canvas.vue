@@ -182,8 +182,10 @@ const sendConfig = () => {
   })
 }
 
+const DEFAULT_PAGE_NAME = '第 1 页'
+
 const createEmptyMxFile = () => {
-  return `<mxfile host="GraphSpeak"><diagram id="${uniquePageId.value}" name="Page-1"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>`
+  return `<mxfile host="GraphSpeak"><diagram id="${uniquePageId.value}" name="${DEFAULT_PAGE_NAME}"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>`
 }
 
 const serializeNodeChildren = (node) => {
@@ -222,7 +224,7 @@ const normalizeGraphXml = (xmlString) => {
         const nestedMxfile = diagram.querySelector(':scope > mxfile')
         const model = diagram.querySelector(':scope > mxGraphModel') || nestedMxfile?.querySelector('mxGraphModel')
         const diagramId = diagram.getAttribute('id') || `page-${index + 1}`
-        const diagramName = diagram.getAttribute('name') || `Page-${index + 1}`
+        const diagramName = diagram.getAttribute('name') || `第 ${index + 1} 页`
         if (model) {
           return createDiagramXml(serializer.serializeToString(model), diagramId, diagramName)
         }
@@ -234,7 +236,7 @@ const normalizeGraphXml = (xmlString) => {
   } else {
     const model = xmlDoc.querySelector('mxGraphModel')
     processedXml = model
-      ? `<mxfile host="GraphSpeak">${createDiagramXml(serializer.serializeToString(model), uniquePageId.value, 'Page-1')}</mxfile>`
+      ? `<mxfile host="GraphSpeak">${createDiagramXml(serializer.serializeToString(model), uniquePageId.value, DEFAULT_PAGE_NAME)}</mxfile>`
       : createEmptyMxFile()
     xmlDoc = parser.parseFromString(processedXml, 'text/xml')
   }
